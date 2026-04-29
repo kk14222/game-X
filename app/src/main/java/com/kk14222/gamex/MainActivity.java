@@ -36,6 +36,16 @@ public class MainActivity extends Activity {
     private static final String[] SHEEP_SYMBOLS = {"🐑", "🌿", "🧶", "🌙", "☁", "🌼", "🍃", "💧", "🥛", "🪵", "🔆", "🍂"};
     private static final String[] FRUITS = {"🍒", "🍓", "🍊", "🍋", "🍎", "🍑", "🍍", "🍉"};
 
+    private static final int TILE_GAME_CELL_DP = 58;
+    private static final int WATERMELON_CELL_DP = 62;
+    private static final int GAME_2048_CELL_DP = 72;
+    private static final long MIN_JUMP_TICK_MS = 110L;
+    private static final long BASE_JUMP_TICK_MS = 280L;
+    private static final long JUMP_LEVEL_SPEED_STEP_MS = 4L;
+    private static final int TILE_BASE_GROUPS = 4;
+    private static final int TILE_LEVEL_GROUP_CYCLE = 5;
+    private static final int TILE_RANDOM_EXTRA_GROUPS = 3;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -146,7 +156,7 @@ public class MainActivity extends Activity {
             tile.setAllCaps(false);
             tile.setOnClickListener(v -> tilePick(state, tile, status));
             state.buttons.add(tile);
-            grid.addView(tile, new ViewGroupParams(dp(58), dp(58)));
+            grid.addView(tile, new ViewGroupParams(dp(TILE_GAME_CELL_DP), dp(TILE_GAME_CELL_DP)));
         }
 
         Button restart = new Button(this);
@@ -344,7 +354,7 @@ public class MainActivity extends Activity {
                     else builder.append("▱");
                 }
                 meter.setText(builder.toString());
-                handler.postDelayed(this, Math.max(110L, 280L - state.level * 4L));
+                handler.postDelayed(this, Math.max(MIN_JUMP_TICK_MS, BASE_JUMP_TICK_MS - state.level * JUMP_LEVEL_SPEED_STEP_MS));
             }
         };
         handler.post(jumpTicker);
@@ -371,7 +381,7 @@ public class MainActivity extends Activity {
                 int col = c;
                 cell.setOnClickListener(v -> watermelonTap(state, cells, row, col, score));
                 cells[r][c] = cell;
-                grid.addView(cell, new ViewGroupParams(dp(62), dp(62)));
+                grid.addView(cell, new ViewGroupParams(dp(WATERMELON_CELL_DP), dp(WATERMELON_CELL_DP)));
             }
         }
         Button restart = new Button(this);
@@ -454,7 +464,7 @@ public class MainActivity extends Activity {
                 cell.setTextSize(20);
                 cell.setEnabled(false);
                 cells[r][c] = cell;
-                grid.addView(cell, new ViewGroupParams(dp(72), dp(72)));
+                grid.addView(cell, new ViewGroupParams(dp(GAME_2048_CELL_DP), dp(GAME_2048_CELL_DP)));
             }
         }
         LinearLayout row1 = new LinearLayout(this);
@@ -596,7 +606,7 @@ public class MainActivity extends Activity {
             this.symbols = symbols;
             this.level = level;
             this.trayLimit = trayLimit;
-            int groups = Math.min(symbols.length, 4 + level % 5 + random.nextInt(3));
+            int groups = Math.min(symbols.length, TILE_BASE_GROUPS + level % TILE_LEVEL_GROUP_CYCLE + random.nextInt(TILE_RANDOM_EXTRA_GROUPS));
             List<String> pool = new ArrayList<>();
             Collections.addAll(pool, symbols);
             Collections.shuffle(pool, random);
