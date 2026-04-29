@@ -3,11 +3,15 @@ package com.kk14222.gamex;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -36,6 +40,11 @@ public class MainActivity extends Activity {
     private static final String[] SHEEP_SYMBOLS = {"🐑", "🌿", "🧶", "🌙", "☁", "🌼", "🍃", "💧", "🥛", "🪵", "🔆", "🍂"};
     private static final String[] FRUITS = {"🍒", "🍓", "🍊", "🍋", "🍎", "🍑", "🍍", "🍉"};
 
+    private static final int PIG_GRID_SIZE = 7;
+    private static final int PIG_BOARD_DP = 420;
+    private static final int PIG_BASE_COUNT = 12;
+    private static final int PIG_LEVEL_COUNT_STEP = 2;
+    private static final int PIG_MAX_COUNT = 32;
     private static final int TILE_GAME_CELL_DP = 58;
     private static final int WATERMELON_CELL_DP = 62;
     private static final int GAME_2048_CELL_DP = 72;
@@ -73,7 +82,7 @@ public class MainActivity extends Activity {
     private void showHome() {
         setRoot("Game X 单机小游戏合集");
         root.addView(label("选择一个游戏开始。本地会自动保存关卡、分数和进度。", 16, false), fullWidth());
-        addHomeButton("猪了个猪", "随机三消闯关，带撤回、洗牌、移除道具。道具需答 100 以内加减法。", () -> showTileGame("pig", "猪了个猪", PIG_SYMBOLS, 7));
+        addHomeButton("猪了个猪", "随机猪群冲刺解谜：点击小猪沿箭头冲出围栏，全部离场即可过关。", this::showPigRushGame);
         addHomeButton("羊了个羊", "羊主题三消，更多随机牌组，失败后可重开本关。", () -> showTileGame("sheep", "羊了个羊", SHEEP_SYMBOLS, 8));
         addHomeButton("跳一跳", "看准能量条落在绿色区域，连续跳台阶过关。", this::showJumpGame);
         addHomeButton("合成大西瓜", "点击空格落水果，相邻同水果会合成更大的水果。", this::showWatermelonGame);
@@ -124,6 +133,77 @@ public class MainActivity extends Activity {
 
     private void saveProgress(String key, int value) {
         prefs.edit().putInt(key, value).apply();
+    }
+
+    private void showPigRushGame() {
+        int level = getProgress("pig_level", 1);
+        PigRushState state = new PigRushState(level);
+        renderPigRushGame(state);
+    }
+
+    private void renderPigRushGame(PigRushState state) {
+        setRoot("猪了个猪  第 " + state.level + " 关");
+        TextView status = label(pigRushStatus(state), 16, false);
+        root.addView(label("点击任意小猪，它会沿身上的箭头方向向前冲；前方有猪会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
+        root.addView(status, fullWidth());
+
+        PigRushBoardView board = new PigRushBoardView(state, status);
+        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(PIG_BOARD_DP));
+        boardParams.setMargins(0, dp(8), 0, dp(10));
+        root.addView(board, boardParams);
+
+        Button restart = new Button(this);
+        restart.setText("重开本关（重新随机猪群）");
+        restart.setAllCaps(false);
+        restart.setOnClickListener(v -> renderPigRushGame(new PigRushState(state.level)));
+        root.addView(restart, fullWidth());
+        addBackButton();
+    }
+
+    private String pigRushStatus(PigRushState state) {
+        return "剩余小猪：" + state.remaining + "/" + state.total + "。全部冲出围栏即可过关。";
+    }
+
+    private void handlePigRushTap(PigRushState state, PigRushBoardView board, TextView status, int row, int col) {
+        Pig pig = state.pigAt(row, col);
+        if (pig == null) return;
+
+        int dr = PigRushState.DIR_ROWS[pig.direction];
+        int dc = PigRushState.DIR_COLS[pig.direction];
+        int nextRow = pig.row + dr;
+        int nextCol = pig.col + dc;
+        int steps = 0;
+        while (state.isInside(nextRow, nextCol)) {
+            if (state.pigAt(nextRow, nextCol) != null) break;
+            steps++;
+            nextRow += dr;
+            nextCol += dc;
+        }
+
+        if (!state.isInside(nextRow, nextCol)) {
+            pig.active = false;
+            state.remaining--;
+            Toast.makeText(this, "小猪冲出去了！", Toast.LENGTH_SHORT).show();
+        } else if (steps > 0) {
+            pig.row += dr * steps;
+            pig.col += dc * steps;
+            Toast.makeText(this, "前方被挡住，小猪停下了", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, "前方紧贴着小猪，冲不动", Toast.LENGTH_SHORT).show();
+        }
+
+        status.setText(pigRushStatus(state));
+        board.invalidate();
+        if (state.remaining == 0) {
+            int next = state.level + 1;
+            saveProgress("pig_level", next);
+            new AlertDialog.Builder(this)
+                    .setTitle("过关啦")
+                    .setMessage("所有小猪都冲出围栏了！下一关：" + next)
+                    .setPositiveButton("下一关", (d, w) -> renderPigRushGame(new PigRushState(next)))
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        }
     }
 
     private void showTileGame(String key, String name, String[] symbols, int trayLimit) {
@@ -585,6 +665,152 @@ public class MainActivity extends Activity {
             this.width = width;
             this.height = height;
             setMargins(4, 4, 4, 4);
+        }
+    }
+
+    private class PigRushBoardView extends View {
+        private final PigRushState state;
+        private final TextView status;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF boardRect = new RectF();
+        private float cellSize;
+
+        PigRushBoardView(PigRushState state, TextView status) {
+            super(MainActivity.this);
+            this.state = state;
+            this.status = status;
+            setBackgroundColor(Color.rgb(255, 248, 239));
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float side = Math.min(getWidth() - dp(24), getHeight() - dp(20));
+            float left = (getWidth() - side) / 2f;
+            float top = (getHeight() - side) / 2f;
+            boardRect.set(left, top, left + side, top + side);
+            cellSize = side / PIG_GRID_SIZE;
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(120, 196, 145));
+            canvas.drawRoundRect(boardRect, dp(24), dp(24), paint);
+            paint.setColor(Color.rgb(146, 213, 161));
+            canvas.drawRoundRect(new RectF(boardRect.left + dp(8), boardRect.top + dp(8), boardRect.right - dp(8), boardRect.bottom - dp(8)), dp(18), dp(18), paint);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1));
+            paint.setColor(Color.argb(82, 67, 123, 74));
+            for (int i = 1; i < PIG_GRID_SIZE; i++) {
+                float offset = boardRect.left + cellSize * i;
+                canvas.drawLine(offset, boardRect.top + dp(10), offset, boardRect.bottom - dp(10), paint);
+                float row = boardRect.top + cellSize * i;
+                canvas.drawLine(boardRect.left + dp(10), row, boardRect.right - dp(10), row, paint);
+            }
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(cellSize * 0.24f);
+            paint.setColor(Color.rgb(250, 255, 236));
+            canvas.drawText("出口", boardRect.centerX(), boardRect.top + cellSize * 0.45f, paint);
+            canvas.drawText("出口", boardRect.centerX(), boardRect.bottom - cellSize * 0.25f, paint);
+            canvas.drawText("出口", boardRect.left + cellSize * 0.55f, boardRect.centerY(), paint);
+            canvas.drawText("出口", boardRect.right - cellSize * 0.55f, boardRect.centerY(), paint);
+
+            for (Pig pig : state.pigs) {
+                if (pig.active) drawPig(canvas, pig);
+            }
+        }
+
+        private void drawPig(Canvas canvas, Pig pig) {
+            float cx = boardRect.left + pig.col * cellSize + cellSize / 2f;
+            float cy = boardRect.top + pig.row * cellSize + cellSize / 2f;
+            float radius = cellSize * 0.32f;
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(55, 80, 62, 44));
+            canvas.drawOval(new RectF(cx - radius * 0.95f, cy + radius * 0.56f, cx + radius * 0.95f, cy + radius * 1.0f), paint);
+
+            paint.setColor(Color.rgb(255, 154, 181));
+            canvas.drawCircle(cx - radius * 0.58f, cy - radius * 0.52f, radius * 0.34f, paint);
+            canvas.drawCircle(cx + radius * 0.58f, cy - radius * 0.52f, radius * 0.34f, paint);
+            paint.setColor(Color.rgb(255, 186, 203));
+            canvas.drawCircle(cx, cy, radius, paint);
+            paint.setColor(Color.rgb(255, 129, 161));
+            canvas.drawOval(new RectF(cx - radius * 0.42f, cy - radius * 0.05f, cx + radius * 0.42f, cy + radius * 0.42f), paint);
+            paint.setColor(Color.rgb(82, 48, 54));
+            canvas.drawCircle(cx - radius * 0.32f, cy - radius * 0.2f, radius * 0.08f, paint);
+            canvas.drawCircle(cx + radius * 0.32f, cy - radius * 0.2f, radius * 0.08f, paint);
+            paint.setColor(Color.rgb(123, 65, 73));
+            canvas.drawCircle(cx - radius * 0.16f, cy + radius * 0.18f, radius * 0.06f, paint);
+            canvas.drawCircle(cx + radius * 0.16f, cy + radius * 0.18f, radius * 0.06f, paint);
+
+            paint.setTextSize(radius * 0.95f);
+            paint.setFakeBoldText(true);
+            paint.setColor(Color.rgb(86, 83, 94));
+            canvas.drawText(PigRushState.ARROWS[pig.direction], cx, cy + radius * 1.55f, paint);
+            paint.setFakeBoldText(false);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (event.getAction() != MotionEvent.ACTION_UP || !boardRect.contains(event.getX(), event.getY())) {
+                return true;
+            }
+            int col = (int) ((event.getX() - boardRect.left) / cellSize);
+            int row = (int) ((event.getY() - boardRect.top) / cellSize);
+            handlePigRushTap(state, this, status, row, col);
+            return true;
+        }
+    }
+
+    private class PigRushState {
+        static final int[] DIR_ROWS = {-1, 0, 1, 0};
+        static final int[] DIR_COLS = {0, 1, 0, -1};
+        static final String[] ARROWS = {"↑", "→", "↓", "←"};
+        final int level;
+        final int total;
+        final List<Pig> pigs = new ArrayList<>();
+        int remaining;
+
+        PigRushState(int level) {
+            this.level = level;
+            total = Math.min(PIG_MAX_COUNT, PIG_BASE_COUNT + (level - 1) * PIG_LEVEL_COUNT_STEP);
+            remaining = total;
+            boolean[][] used = new boolean[PIG_GRID_SIZE][PIG_GRID_SIZE];
+            for (int i = 0; i < total; i++) {
+                int row;
+                int col;
+                do {
+                    row = random.nextInt(PIG_GRID_SIZE);
+                    col = random.nextInt(PIG_GRID_SIZE);
+                } while (used[row][col]);
+                used[row][col] = true;
+                pigs.add(new Pig(row, col, random.nextInt(4)));
+            }
+        }
+
+        boolean isInside(int row, int col) {
+            return row >= 0 && row < PIG_GRID_SIZE && col >= 0 && col < PIG_GRID_SIZE;
+        }
+
+        Pig pigAt(int row, int col) {
+            for (Pig pig : pigs) {
+                if (pig.active && pig.row == row && pig.col == col) return pig;
+            }
+            return null;
+        }
+    }
+
+    private static class Pig {
+        int row;
+        int col;
+        final int direction;
+        boolean active = true;
+
+        Pig(int row, int col, int direction) {
+            this.row = row;
+            this.col = col;
+            this.direction = direction;
         }
     }
 
