@@ -3,11 +3,15 @@ package com.kk14222.gamex;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -36,6 +40,21 @@ public class MainActivity extends Activity {
     private static final String[] SHEEP_SYMBOLS = {"🐑", "🌿", "🧶", "🌙", "☁", "🌼", "🍃", "💧", "🥛", "🪵", "🔆", "🍂"};
     private static final String[] FRUITS = {"🍒", "🍓", "🍊", "🍋", "🍎", "🍑", "🍍", "🍉"};
 
+    private static final int PIG_GRID_SIZE = 7;
+    private static final int PIG_BOARD_DP = 420;
+    private static final int PIG_BASE_COUNT = 12;
+    private static final int PIG_LEVEL_COUNT_STEP = 2;
+    private static final int PIG_MAX_COUNT = 32;
+    private static final int[] PIG_DIR_ROWS = {-1, 0, 1, 0};
+    private static final int[] PIG_DIR_COLS = {0, 1, 0, -1};
+    private static final String[] PIG_ARROWS = {"↑", "→", "↓", "←"};
+    private static final int SHEEP_TRAY_LIMIT = 7;
+    private static final int SHEEP_BOARD_DP = 420;
+    private static final int SHEEP_LAYERS = 3;
+    private static final int WATERMELON_BOARD_DP = 520;
+    private static final int WATERMELON_ROWS = 10;
+    private static final int WATERMELON_COLS = 7;
+    private static final String[] WATERMELON_SYMBOLS = {"🍒", "🍓", "🍇", "🍊", "🍎", "🍐", "🍑", "🍍", "🍈", "🍉"};
     private static final int TILE_GAME_CELL_DP = 58;
     private static final int WATERMELON_CELL_DP = 62;
     private static final int GAME_2048_CELL_DP = 72;
@@ -73,11 +92,11 @@ public class MainActivity extends Activity {
     private void showHome() {
         setRoot("Game X 单机小游戏合集");
         root.addView(label("选择一个游戏开始。本地会自动保存关卡、分数和进度。", 16, false), fullWidth());
-        addHomeButton("猪了个猪", "随机三消闯关，带撤回、洗牌、移除道具。道具需答 100 以内加减法。", () -> showTileGame("pig", "猪了个猪", PIG_SYMBOLS, 7));
-        addHomeButton("羊了个羊", "羊主题三消，更多随机牌组，失败后可重开本关。", () -> showTileGame("sheep", "羊了个羊", SHEEP_SYMBOLS, 8));
-        addHomeButton("跳一跳", "看准能量条落在绿色区域，连续跳台阶过关。", this::showJumpGame);
-        addHomeButton("合成大西瓜", "点击空格落水果，相邻同水果会合成更大的水果。", this::showWatermelonGame);
-        addHomeButton("合成 2048", "方向按钮移动数字，合成 2048 或更高分。", this::show2048Game);
+        addHomeButton("猪了个猪", "随机猪群冲刺解谜：点击小猪沿箭头冲出围栏，全部离场即可过关。", this::showPigRushGame);
+        addHomeButton("羊了个羊", "多层叠牌三消：只能点击未被覆盖的牌，七槽满即失败。", this::showSheepGame);
+        addHomeButton("跳一跳", "按住屏幕蓄力，松开跳向下一个方块，中心落点加分。", this::showJumpGame);
+        addHomeButton("合成大西瓜", "从顶部选择位置投放水果，相同水果碰撞合成更大水果。", this::showWatermelonGame);
+        addHomeButton("合成 2048", "滑动棋盘移动数字，合成 2048 后可继续挑战。", this::show2048Game);
     }
 
     private void addHomeButton(String title, String desc, Runnable action) {
@@ -124,6 +143,140 @@ public class MainActivity extends Activity {
 
     private void saveProgress(String key, int value) {
         prefs.edit().putInt(key, value).apply();
+    }
+
+    private void showPigRushGame() {
+        int level = getProgress("pig_level", 1);
+        PigRushState state = new PigRushState(level);
+        renderPigRushGame(state);
+    }
+
+    private void renderPigRushGame(PigRushState state) {
+        setRoot("猪了个猪  第 " + state.level + " 关");
+        TextView status = label(pigRushStatus(state), 16, false);
+        root.addView(label("点击任意小猪，它会沿身上的箭头方向向前冲；前方有猪，会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
+        root.addView(status, fullWidth());
+
+        PigRushBoardView board = new PigRushBoardView(state, status);
+        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(PIG_BOARD_DP));
+        boardParams.setMargins(0, dp(8), 0, dp(10));
+        root.addView(board, boardParams);
+
+        Button restart = new Button(this);
+        restart.setText("重开本关（重新随机猪群）");
+        restart.setAllCaps(false);
+        restart.setOnClickListener(v -> renderPigRushGame(new PigRushState(state.level)));
+        root.addView(restart, fullWidth());
+        addBackButton();
+    }
+
+    private String pigRushStatus(PigRushState state) {
+        return "剩余小猪：" + state.remaining + "/" + state.total + "。全部冲出围栏即可过关。";
+    }
+
+    private void handlePigRushTap(PigRushState state, PigRushBoardView board, TextView status, int row, int col) {
+        Pig pig = state.pigAt(row, col);
+        if (pig == null) return;
+
+        int dr = PIG_DIR_ROWS[pig.direction];
+        int dc = PIG_DIR_COLS[pig.direction];
+        int targetRow = pig.row;
+        int targetCol = pig.col;
+        int scanRow = pig.row + dr;
+        int scanCol = pig.col + dc;
+        while (state.isInside(scanRow, scanCol)) {
+            if (state.pigAt(scanRow, scanCol) != null) break;
+            targetRow = scanRow;
+            targetCol = scanCol;
+            scanRow += dr;
+            scanCol += dc;
+        }
+
+        if (!state.isInside(scanRow, scanCol)) {
+            state.board[pig.row][pig.col] = null;
+            pig.active = false;
+            state.remaining--;
+            Toast.makeText(this, "小猪冲出去了！", Toast.LENGTH_SHORT).show();
+        } else if (targetRow != pig.row || targetCol != pig.col) {
+            state.board[pig.row][pig.col] = null;
+            pig.row = targetRow;
+            pig.col = targetCol;
+            state.board[pig.row][pig.col] = pig;
+            Toast.makeText(this, "前方被挡住，小猪停下了", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, "前方紧贴着小猪，冲不动", Toast.LENGTH_SHORT).show();
+        }
+
+        status.setText(pigRushStatus(state));
+        board.invalidate();
+        if (state.remaining == 0) {
+            int next = state.level + 1;
+            saveProgress("pig_level", next);
+            new AlertDialog.Builder(this)
+                    .setTitle("过关啦")
+                    .setMessage("所有小猪都冲出围栏了！下一关：" + next)
+                    .setPositiveButton("下一关", (d, w) -> renderPigRushGame(new PigRushState(next)))
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        }
+    }
+
+    private void showSheepGame() {
+        int level = getProgress("sheep_level", 1);
+        SheepGameState state = new SheepGameState(level);
+        renderSheepGame(state);
+    }
+
+    private void renderSheepGame(SheepGameState state) {
+        setRoot("羊了个羊  第 " + state.level + " 关");
+        TextView status = label(sheepStatus(state), 16, false);
+        root.addView(label("只能点击没有被上层牌覆盖的牌；牌进入下方 7 个槽位，凑齐 3 张同款会自动消除。", 16, false), fullWidth());
+        root.addView(status, fullWidth());
+        SheepBoardView board = new SheepBoardView(state, status);
+        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(SHEEP_BOARD_DP));
+        boardParams.setMargins(0, dp(8), 0, dp(10));
+        root.addView(board, boardParams);
+        Button restart = new Button(this);
+        restart.setText("重开本关（重新随机叠牌）");
+        restart.setAllCaps(false);
+        restart.setOnClickListener(v -> renderSheepGame(new SheepGameState(state.level)));
+        root.addView(restart, fullWidth());
+        addBackButton();
+    }
+
+    private String sheepStatus(SheepGameState state) {
+        return "剩余牌：" + state.remaining + "  槽位：" + (state.tray.isEmpty() ? "空" : state.tray.toString()) + " / " + SHEEP_TRAY_LIMIT;
+    }
+
+    private void handleSheepTap(SheepGameState state, SheepBoardView board, TextView status, SheepTile tile) {
+        if (tile == null || !tile.active) return;
+        if (state.isCovered(tile)) {
+            Toast.makeText(this, "这张牌被上层压住了", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        tile.active = false;
+        state.remaining--;
+        state.tray.add(tile.symbol);
+        removeTriples(state.tray);
+        status.setText(sheepStatus(state));
+        board.invalidate();
+        if (state.remaining == 0 && state.tray.isEmpty()) {
+            int next = state.level + 1;
+            saveProgress("sheep_level", next);
+            new AlertDialog.Builder(this)
+                    .setTitle("过关啦")
+                    .setMessage("叠牌全部消除，下一关：" + next)
+                    .setPositiveButton("下一关", (d, w) -> renderSheepGame(new SheepGameState(next)))
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        } else if (state.tray.size() >= SHEEP_TRAY_LIMIT) {
+            new AlertDialog.Builder(this)
+                    .setTitle("本关失败")
+                    .setMessage("7 个槽位已经放满，可以重开本关。")
+                    .setPositiveButton("重开", (d, w) -> renderSheepGame(new SheepGameState(state.level)))
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        }
     }
 
     private void showTileGame(String key, String name, String[] symbols, int trayLimit) {
@@ -310,80 +463,66 @@ public class MainActivity extends Activity {
     }
 
     private void showJumpGame() {
-        int level = getProgress("jump_level", 1);
-        setRoot("跳一跳  第 " + level + " 关");
-        TextView hint = label("能量条会来回移动，点“跳！”时停在绿色区就成功。每关需要连续成功 5 次。", 16, false);
-        TextView progress = label("本关进度：0/5", 18, true);
-        TextView meter = label("▁▁▁▁▁▁▁▁▁▁", 34, true);
-        meter.setGravity(Gravity.CENTER);
-        root.addView(hint, fullWidth());
-        root.addView(progress, fullWidth());
-        root.addView(meter, fullWidth());
-        JumpState state = new JumpState(level);
-        Button jump = new Button(this);
-        jump.setText("跳！");
-        jump.setTextSize(22);
-        jump.setAllCaps(false);
-        jump.setOnClickListener(v -> {
-            int targetStart = 3 + state.level % 3;
-            boolean success = state.position >= targetStart && state.position <= targetStart + 2;
-            if (success) state.successes++; else state.successes = 0;
-            progress.setText("本关进度：" + state.successes + "/5" + (success ? "  成功" : "  失误，重新累计"));
-            if (state.successes >= 5) {
-                int next = state.level + 1;
-                saveProgress("jump_level", next);
-                new AlertDialog.Builder(this)
-                        .setTitle("跳过本关")
-                        .setMessage("下一关：" + next)
-                        .setPositiveButton("下一关", (d, w) -> showJumpGame())
-                        .setNegativeButton("返回", (d, w) -> showHome())
-                        .show();
-            }
-        });
-        root.addView(jump, fullWidth());
+        setRoot("跳一跳");
+        JumpState state = new JumpState(getProgress("jump_best", 0));
+        TextView score = label(jumpStatus(state), 18, true);
+        root.addView(label("按住下方画面蓄力，松开后小人会向下一个方块跳跃；落在中心可获得额外分数。", 16, false), fullWidth());
+        root.addView(score, fullWidth());
+        JumpGameView board = new JumpGameView(state, score);
+        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(420));
+        boardParams.setMargins(0, dp(8), 0, dp(10));
+        root.addView(board, boardParams);
+        Button restart = new Button(this);
+        restart.setText("重新开始");
+        restart.setAllCaps(false);
+        restart.setOnClickListener(v -> showJumpGame());
+        root.addView(restart, fullWidth());
         addBackButton();
-        jumpTicker = new Runnable() {
-            @Override public void run() {
-                state.position += state.direction;
-                if (state.position <= 0 || state.position >= 9) state.direction *= -1;
-                int targetStart = 3 + state.level % 3;
-                StringBuilder builder = new StringBuilder();
-                for (int i = 0; i < 10; i++) {
-                    if (i == state.position) builder.append("▲");
-                    else if (i >= targetStart && i <= targetStart + 2) builder.append("▰");
-                    else builder.append("▱");
-                }
-                meter.setText(builder.toString());
-                handler.postDelayed(this, Math.max(MIN_JUMP_TICK_MS, BASE_JUMP_TICK_MS - state.level * JUMP_LEVEL_SPEED_STEP_MS));
-            }
-        };
-        handler.post(jumpTicker);
+    }
+
+    private String jumpStatus(JumpState state) {
+        String suffix = state.message.isEmpty() ? "" : "  " + state.message;
+        return "得分：" + state.score + "  最高：" + state.best + suffix;
+    }
+
+    private void finishJump(JumpState state, JumpGameView board, TextView scoreLabel, long chargeMs) {
+        if (state.gameOver) return;
+        state.charge = 0f;
+        float jumpDistance = Math.min(1.45f, chargeMs / 720f) * state.targetDistance;
+        float diff = Math.abs(jumpDistance - state.targetDistance);
+        float safeRange = 0.18f + state.targetSize * 0.35f;
+        if (diff <= safeRange) {
+            boolean perfect = diff <= 0.08f;
+            state.score += perfect ? 2 : 1;
+            state.best = Math.max(state.best, state.score);
+            saveProgress("jump_best", state.best);
+            state.message = perfect ? "Perfect +2" : "+1";
+            state.targetDistance = 0.65f + random.nextFloat() * 0.75f;
+            state.targetSize = 0.34f + random.nextFloat() * 0.2f;
+        } else {
+            state.gameOver = true;
+            state.message = jumpDistance < state.targetDistance ? "跳短了" : "跳远了";
+            new AlertDialog.Builder(this)
+                    .setTitle("游戏结束")
+                    .setMessage("本局得分：" + state.score)
+                    .setPositiveButton("再来一局", (d, w) -> showJumpGame())
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        }
+        scoreLabel.setText(jumpStatus(state));
+        board.invalidate();
     }
 
     private void showWatermelonGame() {
         setRoot("合成大西瓜");
-        int best = getProgress("watermelon_best", 0);
-        WatermelonState state = new WatermelonState(best);
-        TextView score = label("得分：0  最高：" + best, 18, true);
-        root.addView(label("点击空格放入随机小水果；相邻同水果会自动合成。棋盘满时可重新开始。", 16, false), fullWidth());
+        WatermelonState state = new WatermelonState(getProgress("watermelon_best", 0));
+        TextView score = label(watermelonStatus(state), 18, true);
+        root.addView(label("点击容器上方选择投放位置，水果会从顶部落下；相邻同水果会合成更大的水果，超过警戒线则结束。", 16, false), fullWidth());
         root.addView(score, fullWidth());
-        GridLayout grid = new GridLayout(this);
-        grid.setColumnCount(5);
-        grid.setUseDefaultMargins(true);
-        root.addView(grid, fullWidth());
-        Button[][] cells = new Button[5][5];
-        for (int r = 0; r < 5; r++) {
-            for (int c = 0; c < 5; c++) {
-                Button cell = new Button(this);
-                cell.setText("＋");
-                cell.setTextSize(22);
-                int row = r;
-                int col = c;
-                cell.setOnClickListener(v -> watermelonTap(state, cells, row, col, score));
-                cells[r][c] = cell;
-                grid.addView(cell, new ViewGroupParams(dp(WATERMELON_CELL_DP), dp(WATERMELON_CELL_DP)));
-            }
-        }
+        WatermelonBoardView board = new WatermelonBoardView(state, score);
+        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(WATERMELON_BOARD_DP));
+        boardParams.setMargins(0, dp(8), 0, dp(10));
+        root.addView(board, boardParams);
         Button restart = new Button(this);
         restart.setText("重新开始");
         restart.setAllCaps(false);
@@ -392,35 +531,44 @@ public class MainActivity extends Activity {
         addBackButton();
     }
 
-    private void watermelonTap(WatermelonState state, Button[][] cells, int row, int col, TextView scoreLabel) {
-        if (state.board[row][col] != 0) return;
-        state.board[row][col] = random.nextInt(3) + 1;
-        mergeAround(state, row, col);
-        drawWatermelon(state, cells, scoreLabel);
-        if (watermelonFull(state)) {
-            saveProgress("watermelon_best", Math.max(getProgress("watermelon_best", 0), state.score));
-            new AlertDialog.Builder(this)
-                    .setTitle("棋盘已满")
-                    .setMessage("本局得分：" + state.score)
-                    .setPositiveButton("再来一局", (d, w) -> showWatermelonGame())
-                    .setNegativeButton("返回", (d, w) -> showHome())
-                    .show();
-        }
+    private String watermelonStatus(WatermelonState state) {
+        return "得分：" + state.score + "  最高：" + state.best + "  下一个：" + WATERMELON_SYMBOLS[state.nextFruit];
     }
 
-    private void mergeAround(WatermelonState state, int row, int col) {
+    private void dropWatermelon(WatermelonState state, WatermelonBoardView board, TextView scoreLabel, int col) {
+        if (state.gameOver || col < 0 || col >= WATERMELON_COLS) return;
+        int row = WATERMELON_ROWS - 1;
+        while (row >= 0 && state.board[row][col] != 0) row--;
+        if (row < 0) {
+            endWatermelon(state, scoreLabel);
+            return;
+        }
+        state.board[row][col] = state.nextFruit + 1;
+        mergeWatermelon(state, row, col);
+        state.nextFruit = random.nextInt(5);
+        state.best = Math.max(state.best, state.score);
+        saveProgress("watermelon_best", state.best);
+        scoreLabel.setText(watermelonStatus(state));
+        board.invalidate();
+        if (watermelonOverLine(state)) endWatermelon(state, scoreLabel);
+    }
+
+    private void mergeWatermelon(WatermelonState state, int row, int col) {
         boolean changed;
         do {
             changed = false;
             int value = state.board[row][col];
+            if (value <= 0 || value >= WATERMELON_SYMBOLS.length) return;
             int[][] dirs = {{1,0}, {-1,0}, {0,1}, {0,-1}};
             for (int[] dir : dirs) {
                 int nr = row + dir[0];
                 int nc = col + dir[1];
-                if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && state.board[nr][nc] == value && value < FRUITS.length) {
+                if (nr >= 0 && nr < WATERMELON_ROWS && nc >= 0 && nc < WATERMELON_COLS && state.board[nr][nc] == value) {
                     state.board[nr][nc] = 0;
                     state.board[row][col] = value + 1;
                     state.score += value * 10;
+                    collapseWatermelon(state);
+                    row = lowestInColumn(state, col, value + 1);
                     changed = true;
                     break;
                 }
@@ -428,21 +576,43 @@ public class MainActivity extends Activity {
         } while (changed);
     }
 
-    private void drawWatermelon(WatermelonState state, Button[][] cells, TextView scoreLabel) {
-        int best = Math.max(getProgress("watermelon_best", 0), state.score);
-        saveProgress("watermelon_best", best);
-        scoreLabel.setText("得分：" + state.score + "  最高：" + best);
-        for (int r = 0; r < 5; r++) {
-            for (int c = 0; c < 5; c++) {
-                int value = state.board[r][c];
-                cells[r][c].setText(value == 0 ? "＋" : FRUITS[value - 1]);
+    private void collapseWatermelon(WatermelonState state) {
+        for (int col = 0; col < WATERMELON_COLS; col++) {
+            int write = WATERMELON_ROWS - 1;
+            for (int row = WATERMELON_ROWS - 1; row >= 0; row--) {
+                if (state.board[row][col] != 0) {
+                    int value = state.board[row][col];
+                    state.board[row][col] = 0;
+                    state.board[write--][col] = value;
+                }
             }
         }
     }
 
-    private boolean watermelonFull(WatermelonState state) {
-        for (int[] row : state.board) for (int value : row) if (value == 0) return false;
-        return true;
+    private int lowestInColumn(WatermelonState state, int col, int value) {
+        for (int row = WATERMELON_ROWS - 1; row >= 0; row--) {
+            if (state.board[row][col] == value) return row;
+        }
+        return WATERMELON_ROWS - 1;
+    }
+
+    private boolean watermelonOverLine(WatermelonState state) {
+        for (int col = 0; col < WATERMELON_COLS; col++) if (state.board[1][col] != 0) return true;
+        return false;
+    }
+
+    private void endWatermelon(WatermelonState state, TextView scoreLabel) {
+        if (state.gameOver) return;
+        state.gameOver = true;
+        state.best = Math.max(state.best, state.score);
+        saveProgress("watermelon_best", state.best);
+        scoreLabel.setText(watermelonStatus(state));
+        new AlertDialog.Builder(this)
+                .setTitle("游戏结束")
+                .setMessage("水果超过顶部警戒线，本局得分：" + state.score)
+                .setPositiveButton("再来一局", (d, w) -> showWatermelonGame())
+                .setNegativeButton("返回", (d, w) -> showHome())
+                .show();
     }
 
     private void show2048Game() {
@@ -451,13 +621,31 @@ public class MainActivity extends Activity {
         add2048Tile(state);
         add2048Tile(state);
         TextView score = label("得分：0  最高：" + state.best, 18, true);
-        root.addView(label("用方向按钮移动数字；相同数字碰撞会合成。", 16, false), fullWidth());
+        root.addView(label("在棋盘上滑动或使用方向按钮移动数字；相同数字碰撞会合成，出现 2048 即达成目标。", 16, false), fullWidth());
         root.addView(score, fullWidth());
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(4);
         grid.setUseDefaultMargins(true);
-        root.addView(grid, fullWidth());
         Button[][] cells = new Button[4][4];
+        final float[] down = new float[2];
+        grid.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                down[0] = event.getX();
+                down[1] = event.getY();
+                return true;
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP) {
+                float dx = event.getX() - down[0];
+                float dy = event.getY() - down[1];
+                if (Math.max(Math.abs(dx), Math.abs(dy)) > dp(24)) {
+                    if (Math.abs(dx) > Math.abs(dy)) move2048(state, dx > 0 ? 1 : -1, 0, cells, score);
+                    else move2048(state, 0, dy > 0 ? 1 : -1, cells, score);
+                }
+                return true;
+            }
+            return true;
+        });
+        root.addView(grid, fullWidth());
         for (int r = 0; r < 4; r++) {
             for (int c = 0; c < 4; c++) {
                 Button cell = new Button(this);
@@ -518,6 +706,15 @@ public class MainActivity extends Activity {
         }
         if (moved) add2048Tile(state);
         draw2048(state, cells, score);
+        if (!state.won && has2048(state)) {
+            state.won = true;
+            new AlertDialog.Builder(this)
+                    .setTitle("合成 2048！")
+                    .setMessage("已达成原版目标，可以继续挑战更高分。")
+                    .setPositiveButton("继续", null)
+                    .setNegativeButton("重新开始", (d, w) -> show2048Game())
+                    .show();
+        }
         if (!canMove2048(state)) {
             new AlertDialog.Builder(this)
                     .setTitle("没有可移动格子")
@@ -526,6 +723,11 @@ public class MainActivity extends Activity {
                     .setNegativeButton("返回", (d, w) -> showHome())
                     .show();
         }
+    }
+
+    private boolean has2048(Game2048State state) {
+        for (int[] row : state.board) for (int value : row) if (value >= 2048) return true;
+        return false;
     }
 
     private boolean slide2048(Game2048State state, boolean[][] merged, int r, int c, int dx, int dy) {
@@ -588,6 +790,376 @@ public class MainActivity extends Activity {
         }
     }
 
+    private class PigRushBoardView extends View {
+        private final PigRushState state;
+        private final TextView status;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF boardRect = new RectF();
+        private float cellSize;
+
+        PigRushBoardView(PigRushState state, TextView status) {
+            super(MainActivity.this);
+            this.state = state;
+            this.status = status;
+            setBackgroundColor(Color.rgb(255, 248, 239));
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float side = Math.min(getWidth() - dp(24), getHeight() - dp(20));
+            float left = (getWidth() - side) / 2f;
+            float top = (getHeight() - side) / 2f;
+            boardRect.set(left, top, left + side, top + side);
+            cellSize = side / PIG_GRID_SIZE;
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(120, 196, 145));
+            canvas.drawRoundRect(boardRect, dp(24), dp(24), paint);
+            paint.setColor(Color.rgb(146, 213, 161));
+            canvas.drawRoundRect(new RectF(boardRect.left + dp(8), boardRect.top + dp(8), boardRect.right - dp(8), boardRect.bottom - dp(8)), dp(18), dp(18), paint);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1));
+            paint.setColor(Color.argb(82, 67, 123, 74));
+            for (int i = 1; i < PIG_GRID_SIZE; i++) {
+                float offset = boardRect.left + cellSize * i;
+                canvas.drawLine(offset, boardRect.top + dp(10), offset, boardRect.bottom - dp(10), paint);
+                float row = boardRect.top + cellSize * i;
+                canvas.drawLine(boardRect.left + dp(10), row, boardRect.right - dp(10), row, paint);
+            }
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(cellSize * 0.24f);
+            paint.setColor(Color.rgb(250, 255, 236));
+            canvas.drawText("出口", boardRect.centerX(), boardRect.top + cellSize * 0.45f, paint);
+            canvas.drawText("出口", boardRect.centerX(), boardRect.bottom - cellSize * 0.25f, paint);
+            canvas.drawText("出口", boardRect.left + cellSize * 0.55f, boardRect.centerY(), paint);
+            canvas.drawText("出口", boardRect.right - cellSize * 0.55f, boardRect.centerY(), paint);
+
+            for (Pig pig : state.pigs) {
+                if (pig.active) drawPig(canvas, pig);
+            }
+        }
+
+        private void drawPig(Canvas canvas, Pig pig) {
+            float cx = boardRect.left + pig.col * cellSize + cellSize / 2f;
+            float cy = boardRect.top + pig.row * cellSize + cellSize / 2f;
+            float radius = cellSize * 0.32f;
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(55, 80, 62, 44));
+            canvas.drawOval(new RectF(cx - radius * 0.95f, cy + radius * 0.56f, cx + radius * 0.95f, cy + radius * 1.0f), paint);
+
+            paint.setColor(Color.rgb(255, 154, 181));
+            canvas.drawCircle(cx - radius * 0.58f, cy - radius * 0.52f, radius * 0.34f, paint);
+            canvas.drawCircle(cx + radius * 0.58f, cy - radius * 0.52f, radius * 0.34f, paint);
+            paint.setColor(Color.rgb(255, 186, 203));
+            canvas.drawCircle(cx, cy, radius, paint);
+            paint.setColor(Color.rgb(255, 129, 161));
+            canvas.drawOval(new RectF(cx - radius * 0.42f, cy - radius * 0.05f, cx + radius * 0.42f, cy + radius * 0.42f), paint);
+            paint.setColor(Color.rgb(82, 48, 54));
+            canvas.drawCircle(cx - radius * 0.32f, cy - radius * 0.2f, radius * 0.08f, paint);
+            canvas.drawCircle(cx + radius * 0.32f, cy - radius * 0.2f, radius * 0.08f, paint);
+            paint.setColor(Color.rgb(123, 65, 73));
+            canvas.drawCircle(cx - radius * 0.16f, cy + radius * 0.18f, radius * 0.06f, paint);
+            canvas.drawCircle(cx + radius * 0.16f, cy + radius * 0.18f, radius * 0.06f, paint);
+
+            paint.setTextSize(radius * 0.95f);
+            paint.setFakeBoldText(true);
+            paint.setColor(Color.rgb(86, 83, 94));
+            canvas.drawText(PIG_ARROWS[pig.direction], cx, cy + radius * 1.55f, paint);
+            paint.setFakeBoldText(false);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (event.getAction() != MotionEvent.ACTION_UP) {
+                return true;
+            }
+            if (!boardRect.contains(event.getX(), event.getY())) {
+                return true;
+            }
+            int col = (int) ((event.getX() - boardRect.left) / cellSize);
+            int row = (int) ((event.getY() - boardRect.top) / cellSize);
+            handlePigRushTap(state, this, status, row, col);
+            return true;
+        }
+    }
+
+    private class PigRushState {
+        final int level;
+        final int total;
+        final List<Pig> pigs = new ArrayList<>();
+        final Pig[][] board = new Pig[PIG_GRID_SIZE][PIG_GRID_SIZE];
+        int remaining;
+
+        PigRushState(int level) {
+            this.level = level;
+            total = Math.min(PIG_MAX_COUNT, PIG_BASE_COUNT + (level - 1) * PIG_LEVEL_COUNT_STEP);
+            remaining = total;
+            List<int[]> positions = new ArrayList<>();
+            for (int row = 0; row < PIG_GRID_SIZE; row++) {
+                for (int col = 0; col < PIG_GRID_SIZE; col++) {
+                    positions.add(new int[]{row, col});
+                }
+            }
+            Collections.shuffle(positions, random);
+            for (int i = 0; i < total; i++) {
+                int[] position = positions.get(i);
+                Pig pig = new Pig(position[0], position[1], random.nextInt(4));
+                pigs.add(pig);
+                board[pig.row][pig.col] = pig;
+            }
+        }
+
+        boolean isInside(int row, int col) {
+            return row >= 0 && row < PIG_GRID_SIZE && col >= 0 && col < PIG_GRID_SIZE;
+        }
+
+        Pig pigAt(int row, int col) {
+            if (!isInside(row, col)) return null;
+            return board[row][col];
+        }
+    }
+
+    private static class Pig {
+        int row;
+        int col;
+        final int direction;
+        boolean active = true;
+
+        Pig(int row, int col, int direction) {
+            this.row = row;
+            this.col = col;
+            this.direction = direction;
+        }
+    }
+
+    private class SheepBoardView extends View {
+        private final SheepGameState state;
+        private final TextView status;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF boardRect = new RectF();
+        private float tileSize;
+
+        SheepBoardView(SheepGameState state, TextView status) {
+            super(MainActivity.this);
+            this.state = state;
+            this.status = status;
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float side = Math.min(getWidth() - dp(20), getHeight() - dp(84));
+            float left = (getWidth() - side) / 2f;
+            float top = dp(8);
+            boardRect.set(left, top, left + side, top + side);
+            tileSize = side / 5.2f;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(246, 235, 210));
+            canvas.drawRoundRect(boardRect, dp(18), dp(18), paint);
+            for (SheepTile tile : state.tiles) {
+                if (tile.active) drawSheepTile(canvas, tile);
+            }
+            drawSheepTray(canvas, boardRect.bottom + dp(16));
+        }
+
+        private void drawSheepTile(Canvas canvas, SheepTile tile) {
+            float x = boardRect.left + tile.col * tileSize * 0.72f + tile.layer * tileSize * 0.19f + dp(12);
+            float y = boardRect.top + tile.row * tileSize * 0.62f + tile.layer * tileSize * 0.17f + dp(12);
+            tile.bounds.set(x, y, x + tileSize, y + tileSize);
+            boolean covered = state.isCovered(tile);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(covered ? Color.rgb(206, 194, 177) : Color.rgb(255, 252, 236));
+            canvas.drawRoundRect(tile.bounds, dp(10), dp(10), paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(2));
+            paint.setColor(covered ? Color.rgb(151, 139, 122) : Color.rgb(226, 162, 74));
+            canvas.drawRoundRect(tile.bounds, dp(10), dp(10), paint);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(tileSize * 0.46f);
+            paint.setColor(covered ? Color.rgb(110, 102, 92) : Color.rgb(69, 48, 36));
+            canvas.drawText(tile.symbol, tile.bounds.centerX(), tile.bounds.centerY() + tileSize * 0.17f, paint);
+        }
+
+        private void drawSheepTray(Canvas canvas, float top) {
+            float slot = Math.min((getWidth() - dp(24)) / (float) SHEEP_TRAY_LIMIT, dp(48));
+            float left = (getWidth() - slot * SHEEP_TRAY_LIMIT) / 2f;
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(slot * 0.48f);
+            for (int i = 0; i < SHEEP_TRAY_LIMIT; i++) {
+                RectF rect = new RectF(left + i * slot, top, left + (i + 1) * slot - dp(4), top + slot);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(Color.rgb(238, 224, 203));
+                canvas.drawRoundRect(rect, dp(8), dp(8), paint);
+                if (i < state.tray.size()) {
+                    paint.setColor(Color.rgb(69, 48, 36));
+                    canvas.drawText(state.tray.get(i), rect.centerX(), rect.centerY() + slot * 0.18f, paint);
+                }
+            }
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (event.getAction() != MotionEvent.ACTION_UP) return true;
+            for (int i = state.tiles.size() - 1; i >= 0; i--) {
+                SheepTile tile = state.tiles.get(i);
+                if (tile.active && tile.bounds.contains(event.getX(), event.getY())) {
+                    handleSheepTap(state, this, status, tile);
+                    return true;
+                }
+            }
+            return true;
+        }
+    }
+
+    private class JumpGameView extends View {
+        private final JumpState state;
+        private final TextView scoreLabel;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private long chargeStartedAt;
+
+        JumpGameView(JumpState state, TextView scoreLabel) {
+            super(MainActivity.this);
+            this.state = state;
+            this.scoreLabel = scoreLabel;
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float w = getWidth();
+            float h = getHeight();
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(224, 239, 255));
+            canvas.drawRoundRect(new RectF(dp(8), dp(8), w - dp(8), h - dp(8)), dp(24), dp(24), paint);
+            float baseY = h * 0.72f;
+            float startX = w * 0.28f;
+            float targetX = startX + w * 0.42f * state.targetDistance;
+            float startHalf = w * 0.09f;
+            float targetHalf = w * 0.11f * state.targetSize;
+            drawPlatform(canvas, startX, baseY, startHalf, Color.rgb(92, 119, 180));
+            drawPlatform(canvas, targetX, baseY - dp(52), targetHalf, Color.rgb(238, 149, 91));
+            paint.setColor(Color.rgb(72, 63, 72));
+            float squat = state.charging ? dp(10) + state.charge * dp(18) : 0f;
+            canvas.drawCircle(startX, baseY - dp(46) + squat, dp(18), paint);
+            paint.setColor(Color.rgb(255, 230, 96));
+            canvas.drawCircle(targetX, baseY - dp(52), dp(5), paint);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(dp(16));
+            paint.setColor(Color.rgb(69, 48, 36));
+            canvas.drawText(state.gameOver ? "点击“重新开始”继续" : "按住蓄力，松开跳跃", w / 2f, dp(40), paint);
+            if (state.charging) {
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(Color.rgb(255, 193, 96));
+                canvas.drawRoundRect(new RectF(w * 0.22f, h - dp(48), w * 0.22f + w * 0.56f * state.charge, h - dp(28)), dp(10), dp(10), paint);
+            }
+        }
+
+        private void drawPlatform(Canvas canvas, float cx, float cy, float half, int color) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(50, 20, 20, 20));
+            canvas.drawOval(new RectF(cx - half, cy + dp(20), cx + half, cy + dp(40)), paint);
+            paint.setColor(color);
+            canvas.drawRoundRect(new RectF(cx - half, cy - dp(24), cx + half, cy + dp(24)), dp(12), dp(12), paint);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (state.gameOver) return true;
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                state.charging = true;
+                state.charge = 0f;
+                chargeStartedAt = System.currentTimeMillis();
+                jumpTicker = new Runnable() {
+                    @Override public void run() {
+                        state.charge = Math.min(1f, (System.currentTimeMillis() - chargeStartedAt) / 720f);
+                        invalidate();
+                        if (state.charging) handler.postDelayed(this, 30L);
+                    }
+                };
+                handler.post(jumpTicker);
+                return true;
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP && state.charging) {
+                state.charging = false;
+                if (jumpTicker != null) handler.removeCallbacks(jumpTicker);
+                finishJump(state, this, scoreLabel, System.currentTimeMillis() - chargeStartedAt);
+                return true;
+            }
+            return true;
+        }
+    }
+
+    private class WatermelonBoardView extends View {
+        private final WatermelonState state;
+        private final TextView scoreLabel;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF boardRect = new RectF();
+        private float cellW;
+        private float cellH;
+
+        WatermelonBoardView(WatermelonState state, TextView scoreLabel) {
+            super(MainActivity.this);
+            this.state = state;
+            this.scoreLabel = scoreLabel;
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float width = Math.min(getWidth() - dp(28), dp(360));
+            float height = getHeight() - dp(24);
+            float left = (getWidth() - width) / 2f;
+            boardRect.set(left, dp(10), left + width, dp(10) + height);
+            cellW = boardRect.width() / WATERMELON_COLS;
+            cellH = boardRect.height() / WATERMELON_ROWS;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(255, 244, 218));
+            canvas.drawRoundRect(boardRect, dp(16), dp(16), paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(3));
+            paint.setColor(Color.rgb(128, 92, 58));
+            canvas.drawRoundRect(boardRect, dp(16), dp(16), paint);
+            paint.setColor(Color.rgb(238, 80, 80));
+            paint.setStrokeWidth(dp(2));
+            canvas.drawLine(boardRect.left, boardRect.top + cellH * 1.5f, boardRect.right, boardRect.top + cellH * 1.5f, paint);
+            for (int row = 0; row < WATERMELON_ROWS; row++) {
+                for (int col = 0; col < WATERMELON_COLS; col++) {
+                    int value = state.board[row][col];
+                    if (value > 0) drawFruit(canvas, row, col, value);
+                }
+            }
+        }
+
+        private void drawFruit(Canvas canvas, int row, int col, int value) {
+            float cx = boardRect.left + col * cellW + cellW / 2f;
+            float cy = boardRect.top + row * cellH + cellH / 2f;
+            float radius = Math.min(cellW, cellH) * (0.25f + Math.min(value, 8) * 0.025f);
+            int[] colors = {Color.rgb(226, 51, 71), Color.rgb(238, 87, 118), Color.rgb(129, 90, 185), Color.rgb(249, 149, 56), Color.rgb(225, 66, 59), Color.rgb(238, 203, 90), Color.rgb(244, 132, 110), Color.rgb(242, 180, 72), Color.rgb(119, 190, 92), Color.rgb(84, 170, 88)};
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(colors[(value - 1) % colors.length]);
+            canvas.drawCircle(cx, cy, radius, paint);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(radius * 0.82f);
+            paint.setColor(Color.WHITE);
+            canvas.drawText(WATERMELON_SYMBOLS[value - 1], cx, cy + radius * 0.28f, paint);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (event.getAction() != MotionEvent.ACTION_UP) return true;
+            if (!boardRect.contains(event.getX(), event.getY())) return true;
+            int col = (int) ((event.getX() - boardRect.left) / cellW);
+            dropWatermelon(state, this, scoreLabel, col);
+            return true;
+        }
+    }
+
     private class TileGameState {
         final String key;
         final String name;
@@ -617,25 +1189,87 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static class JumpState {
+    private class SheepGameState {
         final int level;
-        int position;
-        int direction = 1;
-        int successes;
-        JumpState(int level) { this.level = level; }
+        final List<SheepTile> tiles = new ArrayList<>();
+        final List<String> tray = new ArrayList<>();
+        int remaining;
+
+        SheepGameState(int level) {
+            this.level = level;
+            int groups = Math.min(SHEEP_SYMBOLS.length, 7 + level % 4);
+            List<String> symbols = new ArrayList<>();
+            List<String> pool = new ArrayList<>();
+            Collections.addAll(pool, SHEEP_SYMBOLS);
+            Collections.shuffle(pool, random);
+            for (int i = 0; i < groups; i++) for (int j = 0; j < 3; j++) symbols.add(pool.get(i));
+            Collections.shuffle(symbols, random);
+            int index = 0;
+            for (int layer = 0; layer < SHEEP_LAYERS; layer++) {
+                int layerCount = symbols.size() / SHEEP_LAYERS + (layer < symbols.size() % SHEEP_LAYERS ? 1 : 0);
+                for (int i = 0; i < layerCount && index < symbols.size(); i++) {
+                    float row = random.nextInt(5) + random.nextFloat() * 0.35f;
+                    float col = random.nextInt(5) + random.nextFloat() * 0.35f;
+                    tiles.add(new SheepTile(row, col, layer, symbols.get(index++)));
+                }
+            }
+            remaining = tiles.size();
+        }
+
+        boolean isCovered(SheepTile tile) {
+            for (SheepTile other : tiles) {
+                if (!other.active || other.layer <= tile.layer) continue;
+                if (Math.abs(other.row - tile.row) < 0.82f && Math.abs(other.col - tile.col) < 0.82f) return true;
+            }
+            return false;
+        }
+    }
+
+    private static class SheepTile {
+        final float row;
+        final float col;
+        final int layer;
+        final String symbol;
+        final RectF bounds = new RectF();
+        boolean active = true;
+
+        SheepTile(float row, float col, int layer, String symbol) {
+            this.row = row;
+            this.col = col;
+            this.layer = layer;
+            this.symbol = symbol;
+        }
+    }
+
+    private static class JumpState {
+        int score;
+        int best;
+        float targetDistance = 1f;
+        float targetSize = 0.45f;
+        float charge;
+        boolean charging;
+        boolean gameOver;
+        String message = "";
+        JumpState(int best) { this.best = best; }
     }
 
     private static class WatermelonState {
-        final int[][] board = new int[5][5];
-        final int best;
+        final int[][] board = new int[WATERMELON_ROWS][WATERMELON_COLS];
+        int best;
         int score;
-        WatermelonState(int best) { this.best = best; }
+        int nextFruit;
+        boolean gameOver;
+        WatermelonState(int best) {
+            this.best = best;
+            this.nextFruit = new Random().nextInt(5);
+        }
     }
 
     private static class Game2048State {
         final int[][] board = new int[4][4];
         int score;
         int best;
+        boolean won;
         Game2048State(int best) { this.best = best; }
     }
 }
