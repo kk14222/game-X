@@ -184,12 +184,15 @@ public class MainActivity extends Activity {
         }
 
         if (!state.isInside(nextRow, nextCol)) {
+            state.board[pig.row][pig.col] = null;
             pig.active = false;
             state.remaining--;
             Toast.makeText(this, "小猪冲出去了！", Toast.LENGTH_SHORT).show();
         } else if (steps > 0) {
+            state.board[pig.row][pig.col] = null;
             pig.row += dr * steps;
             pig.col += dc * steps;
+            state.board[pig.row][pig.col] = pig;
             Toast.makeText(this, "前方被挡住，小猪停下了", Toast.LENGTH_SHORT).show();
         } else {
             Toast.makeText(this, "前方紧贴着小猪，冲不动", Toast.LENGTH_SHORT).show();
@@ -756,7 +759,13 @@ public class MainActivity extends Activity {
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
-            if (event.getAction() != MotionEvent.ACTION_UP || !boardRect.contains(event.getX(), event.getY())) {
+            if (!boardRect.contains(event.getX(), event.getY())) {
+                return false;
+            }
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                return true;
+            }
+            if (event.getAction() != MotionEvent.ACTION_UP) {
                 return true;
             }
             int col = (int) ((event.getX() - boardRect.left) / cellSize);
@@ -770,22 +779,25 @@ public class MainActivity extends Activity {
         final int level;
         final int total;
         final List<Pig> pigs = new ArrayList<>();
+        final Pig[][] board = new Pig[PIG_GRID_SIZE][PIG_GRID_SIZE];
         int remaining;
 
         PigRushState(int level) {
             this.level = level;
             total = Math.min(PIG_MAX_COUNT, PIG_BASE_COUNT + (level - 1) * PIG_LEVEL_COUNT_STEP);
             remaining = total;
-            boolean[][] used = new boolean[PIG_GRID_SIZE][PIG_GRID_SIZE];
+            List<int[]> positions = new ArrayList<>();
+            for (int row = 0; row < PIG_GRID_SIZE; row++) {
+                for (int col = 0; col < PIG_GRID_SIZE; col++) {
+                    positions.add(new int[]{row, col});
+                }
+            }
+            Collections.shuffle(positions, random);
             for (int i = 0; i < total; i++) {
-                int row;
-                int col;
-                do {
-                    row = random.nextInt(PIG_GRID_SIZE);
-                    col = random.nextInt(PIG_GRID_SIZE);
-                } while (used[row][col]);
-                used[row][col] = true;
-                pigs.add(new Pig(row, col, random.nextInt(4)));
+                int[] position = positions.get(i);
+                Pig pig = new Pig(position[0], position[1], random.nextInt(4));
+                pigs.add(pig);
+                board[pig.row][pig.col] = pig;
             }
         }
 
@@ -794,10 +806,8 @@ public class MainActivity extends Activity {
         }
 
         Pig pigAt(int row, int col) {
-            for (Pig pig : pigs) {
-                if (pig.active && pig.row == row && pig.col == col) return pig;
-            }
-            return null;
+            if (!isInside(row, col)) return null;
+            return board[row][col];
         }
     }
 
