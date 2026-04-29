@@ -173,25 +173,27 @@ public class MainActivity extends Activity {
 
         int dr = PIG_DIR_ROWS[pig.direction];
         int dc = PIG_DIR_COLS[pig.direction];
-        int nextRow = pig.row + dr;
-        int nextCol = pig.col + dc;
-        int steps = 0;
-        while (state.isInside(nextRow, nextCol)) {
-            if (state.pigAt(nextRow, nextCol) != null) break;
-            steps++;
-            nextRow += dr;
-            nextCol += dc;
+        int targetRow = pig.row;
+        int targetCol = pig.col;
+        int scanRow = pig.row + dr;
+        int scanCol = pig.col + dc;
+        while (state.isInside(scanRow, scanCol)) {
+            if (state.pigAt(scanRow, scanCol) != null) break;
+            targetRow = scanRow;
+            targetCol = scanCol;
+            scanRow += dr;
+            scanCol += dc;
         }
 
-        if (!state.isInside(nextRow, nextCol)) {
+        if (!state.isInside(scanRow, scanCol)) {
             state.board[pig.row][pig.col] = null;
             pig.active = false;
             state.remaining--;
             Toast.makeText(this, "小猪冲出去了！", Toast.LENGTH_SHORT).show();
-        } else if (steps > 0) {
+        } else if (targetRow != pig.row || targetCol != pig.col) {
             state.board[pig.row][pig.col] = null;
-            pig.row += dr * steps;
-            pig.col += dc * steps;
+            pig.row = targetRow;
+            pig.col = targetCol;
             state.board[pig.row][pig.col] = pig;
             Toast.makeText(this, "前方被挡住，小猪停下了", Toast.LENGTH_SHORT).show();
         } else {
@@ -759,13 +761,13 @@ public class MainActivity extends Activity {
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
-            if (!boardRect.contains(event.getX(), event.getY())) {
-                return false;
-            }
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
                 return true;
             }
             if (event.getAction() != MotionEvent.ACTION_UP) {
+                return true;
+            }
+            if (!boardRect.contains(event.getX(), event.getY())) {
                 return true;
             }
             int col = (int) ((event.getX() - boardRect.left) / cellSize);
