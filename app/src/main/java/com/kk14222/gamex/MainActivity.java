@@ -147,7 +147,7 @@ public class MainActivity extends Activity {
     private void renderPigRushGame(PigRushState state) {
         setRoot("猪了个猪  第 " + state.level + " 关");
         TextView status = label(pigRushStatus(state), 16, false);
-        root.addView(label("点击任意小猪，它会沿身上的箭头方向向前冲；前方有猪会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
+        root.addView(label("点击任意小猪，它会沿身上的箭头方向向前冲；前方有猪，会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
         root.addView(status, fullWidth());
 
         PigRushBoardView board = new PigRushBoardView(state, status);
@@ -761,9 +761,6 @@ public class MainActivity extends Activity {
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                return true;
-            }
             if (event.getAction() != MotionEvent.ACTION_UP) {
                 return true;
             }
