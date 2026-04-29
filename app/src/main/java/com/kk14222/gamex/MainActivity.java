@@ -161,7 +161,7 @@ public class MainActivity extends Activity {
     private void renderPigRushGame(PigRushState state) {
         setRoot("猪了个猪  第 " + state.level + " 关");
         TextView status = label(pigRushStatus(state), 16, false);
-        root.addView(label("点击任意小猪，它会沿自己脸朝向的方向冲刺（可斜向）；前方有猪会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
+        root.addView(label("点击任意小猪，它会沿自己脸朝向的方向逐格冲刺（含斜向）；路径上遇到猪会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
         root.addView(status, fullWidth());
 
         PigRushBoardView board = new PigRushBoardView(state, status);
@@ -869,8 +869,8 @@ public class MainActivity extends Activity {
             paint.setColor(Color.rgb(140, 210, 132));
             canvas.drawRoundRect(new RectF(boardRect.left + dp(8), boardRect.top + cellSize * 1.2f, boardRect.right - dp(8), boardRect.bottom - dp(8)), dp(18), dp(18), paint);
             paint.setColor(Color.argb(85, 255, 240, 170));
-            for (int i = -PIG_GRASS_STRIPE_OVERFLOW; i < PIG_GRID_SIZE + PIG_GRASS_STRIPE_OVERFLOW; i += 2) {
-                float x = boardRect.left + i * cellSize;
+            for (int stripeIndex = -PIG_GRASS_STRIPE_OVERFLOW; stripeIndex < PIG_GRID_SIZE + PIG_GRASS_STRIPE_OVERFLOW; stripeIndex += 2) {
+                float x = boardRect.left + stripeIndex * cellSize;
                 canvas.drawOval(new RectF(x, boardRect.top + cellSize * 1.35f, x + cellSize * 2.4f, boardRect.bottom - cellSize * 0.15f), paint);
             }
 
