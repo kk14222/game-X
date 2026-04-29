@@ -6,6 +6,7 @@ import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.os.Bundle;
 import android.os.Handler;
@@ -42,12 +43,18 @@ public class MainActivity extends Activity {
 
     private static final int PIG_GRID_SIZE = 7;
     private static final int PIG_BOARD_DP = 420;
-    private static final int PIG_BASE_COUNT = 12;
-    private static final int PIG_LEVEL_COUNT_STEP = 2;
-    private static final int PIG_MAX_COUNT = 32;
-    private static final int[] PIG_DIR_ROWS = {-1, 0, 1, 0};
-    private static final int[] PIG_DIR_COLS = {0, 1, 0, -1};
-    private static final String[] PIG_ARROWS = {"↑", "→", "↓", "←"};
+    private static final int PIG_BASE_COUNT = 18;
+    private static final int PIG_LEVEL_COUNT_STEP = 3;
+    private static final int PIG_MAX_COUNT = 42;
+    private static final int PIG_DIRECTION_COUNT = 8;
+    // Direction indexes are N, NE, E, SE, S, SW, W, NW; rows, cols, and angles must stay aligned.
+    private static final int[] PIG_DIR_ROWS = {-1, -1, 0, 1, 1, 1, 0, -1};
+    private static final int[] PIG_DIR_COLS = {0, 1, 1, 1, 0, -1, -1, -1};
+    private static final float[] PIG_DIR_ANGLES = {0f, 45f, 90f, 135f, 180f, 225f, 270f, 315f};
+    private static final float PIG_BACKGROUND_SUN_X = 0.9f;
+    private static final float PIG_BACKGROUND_SUN_Y = 0.75f;
+    private static final float PIG_BACKGROUND_SUN_RADIUS = 0.34f;
+    private static final int PIG_GRASS_STRIPE_OVERFLOW = 2;
     private static final int SHEEP_TRAY_LIMIT = 7;
     private static final int SHEEP_BOARD_DP = 420;
     private static final int SHEEP_LAYERS = 3;
@@ -92,7 +99,7 @@ public class MainActivity extends Activity {
     private void showHome() {
         setRoot("Game X 单机小游戏合集");
         root.addView(label("选择一个游戏开始。本地会自动保存关卡、分数和进度。", 16, false), fullWidth());
-        addHomeButton("猪了个猪", "随机猪群冲刺解谜：点击小猪沿箭头冲出围栏，全部离场即可过关。", this::showPigRushGame);
+        addHomeButton("猪了个猪", "随机猪群冲刺解谜：点击朝向不同的小猪冲出围栏，全部离场即可过关。", this::showPigRushGame);
         addHomeButton("羊了个羊", "多层叠牌三消：只能点击未被覆盖的牌，七槽满即失败。", this::showSheepGame);
         addHomeButton("跳一跳", "按住屏幕蓄力，松开跳向下一个方块，中心落点加分。", this::showJumpGame);
         addHomeButton("合成大西瓜", "从顶部选择位置投放水果，相同水果碰撞合成更大水果。", this::showWatermelonGame);
@@ -154,7 +161,7 @@ public class MainActivity extends Activity {
     private void renderPigRushGame(PigRushState state) {
         setRoot("猪了个猪  第 " + state.level + " 关");
         TextView status = label(pigRushStatus(state), 16, false);
-        root.addView(label("点击任意小猪，它会沿身上的箭头方向向前冲；前方有猪，会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
+        root.addView(label("点击任意小猪，它会沿自己脸朝向的方向逐格冲刺（含斜向）；路径上遇到猪会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
         root.addView(status, fullWidth());
 
         PigRushBoardView board = new PigRushBoardView(state, status);
@@ -813,11 +820,7 @@ public class MainActivity extends Activity {
             boardRect.set(left, top, left + side, top + side);
             cellSize = side / PIG_GRID_SIZE;
 
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.rgb(120, 196, 145));
-            canvas.drawRoundRect(boardRect, dp(24), dp(24), paint);
-            paint.setColor(Color.rgb(146, 213, 161));
-            canvas.drawRoundRect(new RectF(boardRect.left + dp(8), boardRect.top + dp(8), boardRect.right - dp(8), boardRect.bottom - dp(8)), dp(18), dp(18), paint);
+            drawPigRushBackground(canvas);
 
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(dp(1));
@@ -843,34 +846,102 @@ public class MainActivity extends Activity {
             }
         }
 
+        private void drawPigRushBackground(Canvas canvas) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(169, 224, 255));
+            canvas.drawRoundRect(boardRect, dp(24), dp(24), paint);
+            paint.setColor(Color.rgb(255, 246, 178));
+            canvas.drawCircle(boardRect.right - cellSize * PIG_BACKGROUND_SUN_X, boardRect.top + cellSize * PIG_BACKGROUND_SUN_Y, cellSize * PIG_BACKGROUND_SUN_RADIUS, paint);
+            paint.setColor(Color.argb(215, 255, 255, 255));
+            drawCloud(canvas, 0.35f, 0.45f, 1.75f, 0.88f);
+            drawCloud(canvas, 3.75f, 0.72f, 5.35f, 1.16f);
+
+            Path hills = new Path();
+            hills.moveTo(boardRect.left + dp(8), boardRect.top + cellSize * 1.75f);
+            hills.cubicTo(boardRect.left + cellSize * 1.2f, boardRect.top + cellSize * 0.95f, boardRect.left + cellSize * 2.1f, boardRect.top + cellSize * 2.45f, boardRect.left + cellSize * 3.4f, boardRect.top + cellSize * 1.45f);
+            hills.cubicTo(boardRect.left + cellSize * 4.45f, boardRect.top + cellSize * 0.78f, boardRect.left + cellSize * 5.25f, boardRect.top + cellSize * 2.25f, boardRect.right - dp(8), boardRect.top + cellSize * 1.4f);
+            hills.lineTo(boardRect.right - dp(8), boardRect.bottom - dp(8));
+            hills.lineTo(boardRect.left + dp(8), boardRect.bottom - dp(8));
+            hills.close();
+            paint.setColor(Color.rgb(107, 190, 120));
+            canvas.drawPath(hills, paint);
+
+            paint.setColor(Color.rgb(140, 210, 132));
+            canvas.drawRoundRect(new RectF(boardRect.left + dp(8), boardRect.top + cellSize * 1.2f, boardRect.right - dp(8), boardRect.bottom - dp(8)), dp(18), dp(18), paint);
+            paint.setColor(Color.argb(85, 255, 240, 170));
+            for (int stripeIndex = -PIG_GRASS_STRIPE_OVERFLOW; stripeIndex < PIG_GRID_SIZE + PIG_GRASS_STRIPE_OVERFLOW; stripeIndex += 2) {
+                float x = boardRect.left + stripeIndex * cellSize;
+                canvas.drawOval(new RectF(x, boardRect.top + cellSize * 1.35f, x + cellSize * 2.4f, boardRect.bottom - cellSize * 0.15f), paint);
+            }
+
+            paint.setColor(Color.rgb(156, 108, 66));
+            paint.setStrokeWidth(dp(5));
+            paint.setStyle(Paint.Style.STROKE);
+            canvas.drawRoundRect(new RectF(boardRect.left + dp(10), boardRect.top + dp(10), boardRect.right - dp(10), boardRect.bottom - dp(10)), dp(17), dp(17), paint);
+            paint.setStyle(Paint.Style.FILL);
+        }
+
+        private void drawCloud(Canvas canvas, float leftCell, float topCell, float rightCell, float bottomCell) {
+            canvas.drawOval(new RectF(boardRect.left + cellSize * leftCell, boardRect.top + cellSize * topCell, boardRect.left + cellSize * rightCell, boardRect.top + cellSize * bottomCell), paint);
+        }
+
         private void drawPig(Canvas canvas, Pig pig) {
             float cx = boardRect.left + pig.col * cellSize + cellSize / 2f;
             float cy = boardRect.top + pig.row * cellSize + cellSize / 2f;
-            float radius = cellSize * 0.32f;
+            float radius = cellSize * 0.35f;
 
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.argb(55, 80, 62, 44));
             canvas.drawOval(new RectF(cx - radius * 0.95f, cy + radius * 0.56f, cx + radius * 0.95f, cy + radius * 1.0f), paint);
 
-            paint.setColor(Color.rgb(255, 154, 181));
-            canvas.drawCircle(cx - radius * 0.58f, cy - radius * 0.52f, radius * 0.34f, paint);
-            canvas.drawCircle(cx + radius * 0.58f, cy - radius * 0.52f, radius * 0.34f, paint);
-            paint.setColor(Color.rgb(255, 186, 203));
-            canvas.drawCircle(cx, cy, radius, paint);
-            paint.setColor(Color.rgb(255, 129, 161));
-            canvas.drawOval(new RectF(cx - radius * 0.42f, cy - radius * 0.05f, cx + radius * 0.42f, cy + radius * 0.42f), paint);
-            paint.setColor(Color.rgb(82, 48, 54));
-            canvas.drawCircle(cx - radius * 0.32f, cy - radius * 0.2f, radius * 0.08f, paint);
-            canvas.drawCircle(cx + radius * 0.32f, cy - radius * 0.2f, radius * 0.08f, paint);
-            paint.setColor(Color.rgb(123, 65, 73));
-            canvas.drawCircle(cx - radius * 0.16f, cy + radius * 0.18f, radius * 0.06f, paint);
-            canvas.drawCircle(cx + radius * 0.16f, cy + radius * 0.18f, radius * 0.06f, paint);
+            canvas.save();
+            canvas.translate(cx, cy);
+            canvas.rotate(PIG_DIR_ANGLES[pig.direction]);
 
-            paint.setTextSize(radius * 0.95f);
-            paint.setFakeBoldText(true);
-            paint.setColor(Color.rgb(86, 83, 94));
-            canvas.drawText(PIG_ARROWS[pig.direction], cx, cy + radius * 1.55f, paint);
-            paint.setFakeBoldText(false);
+            paint.setColor(Color.rgb(252, 135, 169));
+            Path leftEar = new Path();
+            leftEar.moveTo(-radius * 0.38f, -radius * 0.58f);
+            leftEar.lineTo(-radius * 0.82f, -radius * 0.9f);
+            leftEar.lineTo(-radius * 0.64f, -radius * 0.32f);
+            leftEar.close();
+            canvas.drawPath(leftEar, paint);
+            Path rightEar = new Path();
+            rightEar.moveTo(radius * 0.38f, -radius * 0.58f);
+            rightEar.lineTo(radius * 0.82f, -radius * 0.9f);
+            rightEar.lineTo(radius * 0.64f, -radius * 0.32f);
+            rightEar.close();
+            canvas.drawPath(rightEar, paint);
+
+            paint.setColor(Color.rgb(255, 186, 203));
+            canvas.drawOval(new RectF(-radius * 0.88f, -radius * 0.55f, radius * 0.88f, radius * 0.75f), paint);
+            paint.setColor(Color.rgb(255, 202, 215));
+            canvas.drawCircle(0, -radius * 0.33f, radius * 0.66f, paint);
+
+            paint.setColor(Color.rgb(255, 128, 162));
+            Path nose = new Path();
+            nose.moveTo(0, -radius * 0.98f);
+            nose.cubicTo(-radius * 0.44f, -radius * 0.82f, -radius * 0.44f, -radius * 0.45f, 0, -radius * 0.38f);
+            nose.cubicTo(radius * 0.44f, -radius * 0.45f, radius * 0.44f, -radius * 0.82f, 0, -radius * 0.98f);
+            nose.close();
+            canvas.drawPath(nose, paint);
+
+            paint.setColor(Color.rgb(82, 48, 54));
+            canvas.drawCircle(-radius * 0.24f, -radius * 0.36f, radius * 0.08f, paint);
+            canvas.drawCircle(radius * 0.24f, -radius * 0.36f, radius * 0.08f, paint);
+
+            paint.setColor(Color.rgb(255, 129, 161));
+            canvas.drawOval(new RectF(-radius * 0.24f, -radius * 0.82f, radius * 0.24f, -radius * 0.58f), paint);
+            paint.setColor(Color.rgb(123, 65, 73));
+            canvas.drawCircle(-radius * 0.08f, -radius * 0.7f, radius * 0.035f, paint);
+            canvas.drawCircle(radius * 0.08f, -radius * 0.7f, radius * 0.035f, paint);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(radius * 0.1f);
+            paint.setColor(Color.rgb(230, 107, 145));
+            canvas.drawArc(new RectF(radius * 0.43f, radius * 0.25f, radius * 0.92f, radius * 0.74f), 160, 260, false, paint);
+            paint.setStyle(Paint.Style.FILL);
+
+            canvas.restore();
         }
 
         @Override
@@ -908,7 +979,7 @@ public class MainActivity extends Activity {
             Collections.shuffle(positions, random);
             for (int i = 0; i < total; i++) {
                 int[] position = positions.get(i);
-                Pig pig = new Pig(position[0], position[1], random.nextInt(4));
+                Pig pig = new Pig(position[0], position[1], random.nextInt(PIG_DIRECTION_COUNT));
                 pigs.add(pig);
                 board[pig.row][pig.col] = pig;
             }
