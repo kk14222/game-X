@@ -76,6 +76,31 @@ public class MainActivity extends Activity {
     private static final int TILE_LEVEL_GROUP_CYCLE = 5;
     private static final int TILE_RANDOM_EXTRA_GROUPS = 3;
 
+    // ============== 消消乐 (Match-3) ==============
+    private static final int MATCH3_SIZE = 8;
+    private static final int MATCH3_BOARD_DP = 360;
+    private static final String[] MATCH3_SYMBOLS = {"🍓", "🍇", "🍊", "🍋", "🫐", "🍒"};
+    private static final int MATCH3_BASE_TARGET = 500;
+    private static final int MATCH3_LEVEL_TARGET_STEP = 250;
+    private static final int MATCH3_BASE_MOVES = 25;
+
+    // ============== 坦克大战 (Tank) ==============
+    private static final int TANK_GRID = 13;
+    private static final int TANK_BOARD_DP = 320;
+    private static final int TANK_EMPTY = 0;
+    private static final int TANK_BRICK = 1;
+    private static final int TANK_STEEL = 2;
+    private static final int TANK_GRASS = 3;
+    private static final int TANK_BASE = 4;
+    private static final int TANK_DIR_UP = 0;
+    private static final int TANK_DIR_RIGHT = 1;
+    private static final int TANK_DIR_DOWN = 2;
+    private static final int TANK_DIR_LEFT = 3;
+    private static final int[] TANK_DR = {-1, 0, 1, 0};
+    private static final int[] TANK_DC = {0, 1, 0, -1};
+    private static final long TANK_TICK_MS = 130L;
+    private static final int TANK_FIXED_LEVELS = 3;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -108,6 +133,8 @@ public class MainActivity extends Activity {
         addHomeButton("跳一跳", "按住屏幕蓄力，松开跳向下一个方块，中心落点加分。", this::showJumpGame);
         addHomeButton("合成大西瓜", "从顶部选择位置投放水果，相同水果碰撞合成更大水果。", this::showWatermelonGame);
         addHomeButton("合成 2048", "滑动棋盘移动数字，合成 2048 后可继续挑战。", this::show2048Game);
+        addHomeButton("消消乐", "8×8 糖果棋盘：交换相邻糖果形成三连消除，达成关卡目标分通关。", this::showMatch3Game);
+        addHomeButton("坦克大战", "经典 13×13 网格坦克：用方向键和开火键击毁全部敌人，守住老鹰基地。", this::showTankGame);
     }
 
     private void addHomeButton(String title, String desc, Runnable action) {
@@ -726,9 +753,27 @@ public class MainActivity extends Activity {
         Game2048State state = new Game2048State(getProgress("2048_best", 0));
         add2048Tile(state);
         add2048Tile(state);
-        TextView score = label("得分：0  最高：" + state.best, 18, true);
-        root.addView(label("在棋盘上滑动或使用方向按钮移动数字；相同数字碰撞会合成，出现 2048 即达成目标。", 16, false), fullWidth());
-        root.addView(score, fullWidth());
+        root.addView(label("在棋盘上滑动方向移动数字；相同数字碰撞会合成，出现 2048 即达成目标，可继续挑战更高分。", 16, false), fullWidth());
+
+        // Score cards: current / best, side by side.
+        LinearLayout scoreRow = new LinearLayout(this);
+        scoreRow.setOrientation(LinearLayout.HORIZONTAL);
+        scoreRow.setGravity(Gravity.CENTER);
+        TextView scoreCard = make2048ScoreCard("得分", "0");
+        TextView bestCard = make2048ScoreCard("最高", String.valueOf(state.best));
+        TextView gainHint = new TextView(this);
+        gainHint.setTextSize(18);
+        gainHint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        gainHint.setTextColor(Color.rgb(245, 124, 0));
+        gainHint.setPadding(dp(8), 0, dp(8), 0);
+        gainHint.setAlpha(0f);
+        scoreRow.addView(scoreCard, score2048CardParams());
+        scoreRow.addView(bestCard, score2048CardParams());
+        LinearLayout.LayoutParams gainParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        gainParams.gravity = Gravity.CENTER_VERTICAL;
+        scoreRow.addView(gainHint, gainParams);
+        root.addView(scoreRow, fullWidth());
+
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(4);
         grid.setUseDefaultMargins(true);
@@ -743,9 +788,12 @@ public class MainActivity extends Activity {
             if (event.getAction() == MotionEvent.ACTION_UP) {
                 float dx = event.getX() - down[0];
                 float dy = event.getY() - down[1];
-                if (Math.max(Math.abs(dx), Math.abs(dy)) > dp(24)) {
-                    if (Math.abs(dx) > Math.abs(dy)) move2048(state, dx > 0 ? 1 : -1, 0, cells, score);
-                    else move2048(state, 0, dy > 0 ? 1 : -1, cells, score);
+                float adx = Math.abs(dx);
+                float ady = Math.abs(dy);
+                // Larger threshold and clear-direction requirement avoid ambiguous diagonal swipes.
+                if (Math.max(adx, ady) >= dp(32) && Math.max(adx, ady) >= Math.min(adx, ady) * 1.3f) {
+                    if (adx > ady) move2048(state, dx > 0 ? 1 : -1, 0, cells, scoreCard, bestCard, gainHint);
+                    else move2048(state, 0, dy > 0 ? 1 : -1, cells, scoreCard, bestCard, gainHint);
                 }
                 return true;
             }
@@ -757,35 +805,42 @@ public class MainActivity extends Activity {
                 Button cell = new Button(this);
                 cell.setTextSize(20);
                 cell.setEnabled(false);
+                cell.setStateListAnimator(null);
+                cell.setAllCaps(false);
                 cells[r][c] = cell;
                 grid.addView(cell, new ViewGroupParams(dp(GAME_2048_CELL_DP), dp(GAME_2048_CELL_DP)));
             }
         }
-        LinearLayout row1 = new LinearLayout(this);
-        row1.setGravity(Gravity.CENTER);
-        LinearLayout row2 = new LinearLayout(this);
-        row2.setGravity(Gravity.CENTER);
-        root.addView(row1, fullWidth());
-        root.addView(row2, fullWidth());
-        addMoveButton(row1, "上", () -> move2048(state, 0, -1, cells, score));
-        addMoveButton(row2, "左", () -> move2048(state, -1, 0, cells, score));
-        addMoveButton(row2, "下", () -> move2048(state, 0, 1, cells, score));
-        addMoveButton(row2, "右", () -> move2048(state, 1, 0, cells, score));
         Button restart = new Button(this);
         restart.setText("重新开始");
         restart.setAllCaps(false);
-        restart.setOnClickListener(v -> show2048Game());
+        restart.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("重新开始？")
+                .setMessage("当前局得分会清零，最高分会保留。确定重开？")
+                .setPositiveButton("重开", (d, w) -> show2048Game())
+                .setNegativeButton("取消", null)
+                .show());
         root.addView(restart, fullWidth());
         addBackButton();
-        draw2048(state, cells, score);
+        draw2048(state, cells, scoreCard, bestCard);
     }
 
-    private void addMoveButton(LinearLayout row, String text, Runnable action) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setTextSize(20);
-        button.setOnClickListener(v -> action.run());
-        row.addView(button, new LinearLayout.LayoutParams(dp(88), LinearLayout.LayoutParams.WRAP_CONTENT));
+    private TextView make2048ScoreCard(String title, String value) {
+        TextView tv = new TextView(this);
+        tv.setText(title + "\n" + value);
+        tv.setTextSize(16);
+        tv.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        tv.setTextColor(Color.WHITE);
+        tv.setGravity(Gravity.CENTER);
+        tv.setBackgroundColor(Color.rgb(187, 173, 160));
+        tv.setPadding(dp(14), dp(8), dp(14), dp(8));
+        return tv;
+    }
+
+    private LinearLayout.LayoutParams score2048CardParams() {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        p.setMargins(dp(6), dp(6), dp(6), dp(6));
+        return p;
     }
 
     private void add2048Tile(Game2048State state) {
@@ -796,9 +851,10 @@ public class MainActivity extends Activity {
         state.board[chosen[0]][chosen[1]] = random.nextInt(10) == 0 ? 4 : 2;
     }
 
-    private void move2048(Game2048State state, int dx, int dy, Button[][] cells, TextView score) {
+    private void move2048(Game2048State state, int dx, int dy, Button[][] cells, TextView scoreCard, TextView bestCard, TextView gainHint) {
         boolean moved = false;
         boolean[][] merged = new boolean[4][4];
+        int gainedBefore = state.score;
         int startR = dy > 0 ? 2 : 1;
         int endR = dy > 0 ? -1 : 4;
         int stepR = dy > 0 ? -1 : 1;
@@ -810,8 +866,17 @@ public class MainActivity extends Activity {
         } else {
             for (int c = startC; c != endC; c += stepC) for (int r = 0; r < 4; r++) moved |= slide2048(state, merged, r, c, dx, dy);
         }
-        if (moved) add2048Tile(state);
-        draw2048(state, cells, score);
+        if (!moved) return;
+        add2048Tile(state);
+        draw2048(state, cells, scoreCard, bestCard);
+        // Pop merged tiles for visual feedback.
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 4; c++) {
+                if (merged[r][c]) pop2048Cell(cells[r][c]);
+            }
+        }
+        int gained = state.score - gainedBefore;
+        if (gained > 0) showScoreGain(gainHint, gained);
         if (!state.won && has2048(state)) {
             state.won = true;
             new AlertDialog.Builder(this)
@@ -829,6 +894,21 @@ public class MainActivity extends Activity {
                     .setNegativeButton("返回", (d, w) -> showHome())
                     .show();
         }
+    }
+
+    private void pop2048Cell(final Button cell) {
+        cell.setScaleX(1.18f);
+        cell.setScaleY(1.18f);
+        handler.postDelayed(() -> {
+            cell.setScaleX(1f);
+            cell.setScaleY(1f);
+        }, 110L);
+    }
+
+    private void showScoreGain(final TextView gainHint, int gained) {
+        gainHint.setText("+" + gained);
+        gainHint.setAlpha(1f);
+        handler.postDelayed(() -> gainHint.setAlpha(0f), 700L);
     }
 
     private boolean has2048(Game2048State state) {
@@ -863,17 +943,48 @@ public class MainActivity extends Activity {
         return moved;
     }
 
-    private void draw2048(Game2048State state, Button[][] cells, TextView scoreLabel) {
+    private void draw2048(Game2048State state, Button[][] cells, TextView scoreCard, TextView bestCard) {
         state.best = Math.max(state.best, state.score);
         saveProgress("2048_best", state.best);
-        scoreLabel.setText("得分：" + state.score + "  最高：" + state.best);
+        scoreCard.setText("得分\n" + state.score);
+        bestCard.setText("最高\n" + state.best);
         for (int r = 0; r < 4; r++) {
             for (int c = 0; c < 4; c++) {
                 int value = state.board[r][c];
-                cells[r][c].setText(value == 0 ? "" : String.format(Locale.getDefault(), "%d", value));
-                cells[r][c].setBackgroundColor(value == 0 ? Color.rgb(237, 229, 218) : Color.rgb(255, Math.max(140, 240 - value % 120), 120));
+                Button cell = cells[r][c];
+                cell.setText(value == 0 ? "" : String.format(Locale.getDefault(), "%d", value));
+                cell.setBackgroundColor(get2048TileColor(value));
+                cell.setTextColor(get2048TextColor(value));
+                // Bigger numbers shrink to fit the cell.
+                if (value >= 1024) cell.setTextSize(16);
+                else if (value >= 128) cell.setTextSize(18);
+                else cell.setTextSize(22);
             }
         }
+    }
+
+    private int get2048TileColor(int value) {
+        switch (value) {
+            case 0: return Color.rgb(205, 193, 180);
+            case 2: return Color.rgb(238, 228, 218);
+            case 4: return Color.rgb(237, 224, 200);
+            case 8: return Color.rgb(242, 177, 121);
+            case 16: return Color.rgb(245, 149, 99);
+            case 32: return Color.rgb(246, 124, 95);
+            case 64: return Color.rgb(246, 94, 59);
+            case 128: return Color.rgb(237, 207, 114);
+            case 256: return Color.rgb(237, 204, 97);
+            case 512: return Color.rgb(237, 200, 80);
+            case 1024: return Color.rgb(237, 197, 63);
+            case 2048: return Color.rgb(237, 194, 46);
+            default: return Color.rgb(60, 58, 50);
+        }
+    }
+
+    private int get2048TextColor(int value) {
+        if (value == 0) return Color.rgb(205, 193, 180);
+        if (value <= 4) return Color.rgb(119, 110, 101);
+        return Color.WHITE;
     }
 
     private boolean canMove2048(Game2048State state) {
@@ -1566,5 +1677,888 @@ public class MainActivity extends Activity {
         int best;
         boolean won;
         Game2048State(int best) { this.best = best; }
+    }
+
+    // ============================================================================
+    // 消消乐 (Match-3)
+    // ============================================================================
+
+    private void showMatch3Game() {
+        int level = getProgress("match3_level", 1);
+        Match3State state = new Match3State(level, getProgress("match3_best", 0));
+        renderMatch3Game(state);
+    }
+
+    private void renderMatch3Game(Match3State state) {
+        setRoot("消消乐  第 " + state.level + " 关");
+        root.addView(label("点击糖果选中再点相邻糖果交换，或在糖果上滑动方向交换；形成 ≥3 连即可消除并连锁。",
+                14, false), fullWidth());
+        TextView status = label(match3Status(state), 16, true);
+        root.addView(status, fullWidth());
+        Match3BoardView board = new Match3BoardView(state, status);
+        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(MATCH3_BOARD_DP));
+        boardParams.setMargins(0, dp(8), 0, dp(8));
+        root.addView(board, boardParams);
+        Button restart = new Button(this);
+        restart.setText("重开本关（重新随机棋盘）");
+        restart.setAllCaps(false);
+        restart.setOnClickListener(v -> renderMatch3Game(new Match3State(state.level, state.best)));
+        root.addView(restart, fullWidth());
+        addBackButton();
+    }
+
+    private String match3Status(Match3State state) {
+        return "得分：" + state.score + " / 目标 " + state.target
+                + "    剩余步数：" + state.movesLeft
+                + "    最高：" + state.best;
+    }
+
+    private void onMatch3Move(Match3State state, Match3BoardView board, TextView status) {
+        state.best = Math.max(state.best, state.score);
+        saveProgress("match3_best", state.best);
+        status.setText(match3Status(state));
+        board.invalidate();
+        if (state.score >= state.target) {
+            int next = state.level + 1;
+            saveProgress("match3_level", next);
+            new AlertDialog.Builder(this)
+                    .setTitle("过关啦")
+                    .setMessage("达成目标 " + state.target + " 分！下一关：" + next)
+                    .setPositiveButton("下一关", (d, w) -> renderMatch3Game(new Match3State(next, state.best)))
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        } else if (state.movesLeft <= 0) {
+            new AlertDialog.Builder(this)
+                    .setTitle("步数用完")
+                    .setMessage("本关得分：" + state.score + " / " + state.target)
+                    .setPositiveButton("重开本关", (d, w) -> renderMatch3Game(new Match3State(state.level, state.best)))
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        }
+    }
+
+    private boolean trySwapMatch3(Match3State state, int r1, int c1, int r2, int c2) {
+        if (Math.abs(r1 - r2) + Math.abs(c1 - c2) != 1) return false;
+        int tmp = state.board[r1][c1];
+        state.board[r1][c1] = state.board[r2][c2];
+        state.board[r2][c2] = tmp;
+        if (findMatch3(state) == 0) {
+            // No match formed; revert.
+            tmp = state.board[r1][c1];
+            state.board[r1][c1] = state.board[r2][c2];
+            state.board[r2][c2] = tmp;
+            return false;
+        }
+        // Cascade resolve until stable.
+        resolveMatch3Cascade(state);
+        state.movesLeft--;
+        return true;
+    }
+
+    private void resolveMatch3Cascade(Match3State state) {
+        while (true) {
+            int gained = findAndClearMatch3(state);
+            if (gained == 0) break;
+            state.score += gained;
+            collapseMatch3(state);
+        }
+    }
+
+    /** Returns count of cells that would match (without clearing); 0 if none. */
+    private int findMatch3(Match3State state) {
+        boolean[][] mark = computeMatch3Marks(state);
+        int n = 0;
+        for (int r = 0; r < MATCH3_SIZE; r++) for (int c = 0; c < MATCH3_SIZE; c++) if (mark[r][c]) n++;
+        return n;
+    }
+
+    private int findAndClearMatch3(Match3State state) {
+        boolean[][] mark = computeMatch3Marks(state);
+        // Score: 10 per cell + bonus for runs of 4 (+20) and 5+ (+50 each).
+        int score = 0;
+        int cleared = 0;
+        // Count contiguous run lengths to grant bonuses.
+        for (int r = 0; r < MATCH3_SIZE; r++) {
+            int run = 1;
+            for (int c = 1; c <= MATCH3_SIZE; c++) {
+                boolean inRun = c < MATCH3_SIZE && mark[r][c] && state.board[r][c] == state.board[r][c - 1];
+                if (inRun) run++;
+                else {
+                    if (mark[r][c - 1] && run >= 4) score += (run >= 5) ? 50 : 20;
+                    run = 1;
+                }
+            }
+        }
+        for (int c = 0; c < MATCH3_SIZE; c++) {
+            int run = 1;
+            for (int r = 1; r <= MATCH3_SIZE; r++) {
+                boolean inRun = r < MATCH3_SIZE && mark[r][c] && state.board[r][c] == state.board[r - 1][c];
+                if (inRun) run++;
+                else {
+                    if (mark[r - 1][c] && run >= 4) score += (run >= 5) ? 50 : 20;
+                    run = 1;
+                }
+            }
+        }
+        for (int r = 0; r < MATCH3_SIZE; r++) {
+            for (int c = 0; c < MATCH3_SIZE; c++) {
+                if (mark[r][c]) {
+                    state.board[r][c] = -1; // marker for empty
+                    cleared++;
+                }
+            }
+        }
+        score += cleared * 10;
+        return score;
+    }
+
+    private boolean[][] computeMatch3Marks(Match3State state) {
+        boolean[][] mark = new boolean[MATCH3_SIZE][MATCH3_SIZE];
+        // Horizontal runs of length >= 3.
+        for (int r = 0; r < MATCH3_SIZE; r++) {
+            int runStart = 0;
+            for (int c = 1; c <= MATCH3_SIZE; c++) {
+                if (c == MATCH3_SIZE || state.board[r][c] != state.board[r][runStart] || state.board[r][c] < 0) {
+                    int len = c - runStart;
+                    if (len >= 3 && state.board[r][runStart] >= 0) {
+                        for (int k = runStart; k < c; k++) mark[r][k] = true;
+                    }
+                    runStart = c;
+                }
+            }
+        }
+        // Vertical runs of length >= 3.
+        for (int c = 0; c < MATCH3_SIZE; c++) {
+            int runStart = 0;
+            for (int r = 1; r <= MATCH3_SIZE; r++) {
+                if (r == MATCH3_SIZE || state.board[r][c] != state.board[runStart][c] || state.board[r][c] < 0) {
+                    int len = r - runStart;
+                    if (len >= 3 && state.board[runStart][c] >= 0) {
+                        for (int k = runStart; k < r; k++) mark[k][c] = true;
+                    }
+                    runStart = r;
+                }
+            }
+        }
+        return mark;
+    }
+
+    private void collapseMatch3(Match3State state) {
+        for (int c = 0; c < MATCH3_SIZE; c++) {
+            int writeRow = MATCH3_SIZE - 1;
+            for (int r = MATCH3_SIZE - 1; r >= 0; r--) {
+                if (state.board[r][c] >= 0) {
+                    int v = state.board[r][c];
+                    state.board[r][c] = -1;
+                    state.board[writeRow--][c] = v;
+                }
+            }
+            // Refill remaining top cells with random symbols.
+            for (int r = writeRow; r >= 0; r--) {
+                state.board[r][c] = random.nextInt(MATCH3_SYMBOLS.length);
+            }
+        }
+    }
+
+    private class Match3State {
+        final int level;
+        final int target;
+        final int[][] board = new int[MATCH3_SIZE][MATCH3_SIZE];
+        int score;
+        int movesLeft;
+        int best;
+
+        Match3State(int level, int best) {
+            this.level = level;
+            this.target = MATCH3_BASE_TARGET + (level - 1) * MATCH3_LEVEL_TARGET_STEP;
+            this.movesLeft = MATCH3_BASE_MOVES;
+            this.best = best;
+            // Generate a board with no initial matches.
+            do {
+                for (int r = 0; r < MATCH3_SIZE; r++) {
+                    for (int c = 0; c < MATCH3_SIZE; c++) {
+                        board[r][c] = random.nextInt(MATCH3_SYMBOLS.length);
+                    }
+                }
+            } while (findMatch3(this) > 0);
+        }
+    }
+
+    private class Match3BoardView extends View {
+        private final Match3State state;
+        private final TextView status;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF boardRect = new RectF();
+        private float cell;
+        private int selR = -1;
+        private int selC = -1;
+        private float downX, downY;
+        private int downR = -1, downC = -1;
+
+        Match3BoardView(Match3State state, TextView status) {
+            super(MainActivity.this);
+            this.state = state;
+            this.status = status;
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float side = Math.min(getWidth() - dp(16), getHeight() - dp(16));
+            float left = (getWidth() - side) / 2f;
+            float top = (getHeight() - side) / 2f;
+            boardRect.set(left, top, left + side, top + side);
+            cell = side / MATCH3_SIZE;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(255, 244, 222));
+            canvas.drawRoundRect(boardRect, dp(14), dp(14), paint);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(cell * 0.62f);
+            for (int r = 0; r < MATCH3_SIZE; r++) {
+                for (int c = 0; c < MATCH3_SIZE; c++) {
+                    float cx = boardRect.left + c * cell + cell / 2f;
+                    float cy = boardRect.top + r * cell + cell / 2f;
+                    paint.setStyle(Paint.Style.FILL);
+                    boolean selected = r == selR && c == selC;
+                    paint.setColor(selected ? Color.rgb(255, 220, 130) : Color.rgb(255, 252, 240));
+                    RectF tile = new RectF(cx - cell * 0.45f, cy - cell * 0.45f,
+                            cx + cell * 0.45f, cy + cell * 0.45f);
+                    canvas.drawRoundRect(tile, dp(8), dp(8), paint);
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(Math.max(1f, dp(2) * 0.75f));
+                    paint.setColor(selected ? Color.rgb(232, 154, 30) : Color.rgb(225, 200, 160));
+                    canvas.drawRoundRect(tile, dp(8), dp(8), paint);
+                    paint.setStyle(Paint.Style.FILL);
+                    int v = state.board[r][c];
+                    if (v >= 0) {
+                        paint.setColor(Color.rgb(69, 48, 36));
+                        canvas.drawText(MATCH3_SYMBOLS[v], cx, cy + cell * 0.22f, paint);
+                    }
+                }
+            }
+        }
+
+        private int rowAt(float y) {
+            if (cell <= 0f) return -1;
+            int r = (int) ((y - boardRect.top) / cell);
+            return (r < 0 || r >= MATCH3_SIZE) ? -1 : r;
+        }
+
+        private int colAt(float x) {
+            if (cell <= 0f) return -1;
+            int c = (int) ((x - boardRect.left) / cell);
+            return (c < 0 || c >= MATCH3_SIZE) ? -1 : c;
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (state.movesLeft <= 0 || state.score >= state.target) return true;
+            int action = event.getAction();
+            if (action == MotionEvent.ACTION_DOWN) {
+                downX = event.getX();
+                downY = event.getY();
+                downR = rowAt(downY);
+                downC = colAt(downX);
+                return true;
+            }
+            if (action == MotionEvent.ACTION_UP) {
+                int upR = rowAt(event.getY());
+                int upC = colAt(event.getX());
+                if (downR < 0 || downC < 0) return true;
+                float dx = event.getX() - downX;
+                float dy = event.getY() - downY;
+                if (Math.max(Math.abs(dx), Math.abs(dy)) >= cell * 0.4f) {
+                    // Swipe gesture: swap with neighbor in dominant direction.
+                    int dr = 0, dc = 0;
+                    if (Math.abs(dx) > Math.abs(dy)) dc = dx > 0 ? 1 : -1;
+                    else dr = dy > 0 ? 1 : -1;
+                    int tr = downR + dr;
+                    int tc = downC + dc;
+                    if (tr >= 0 && tr < MATCH3_SIZE && tc >= 0 && tc < MATCH3_SIZE) {
+                        attemptSwap(downR, downC, tr, tc);
+                    }
+                    selR = -1; selC = -1;
+                    invalidate();
+                    return true;
+                }
+                // Tap: select / swap with already-selected adjacent cell.
+                if (upR == downR && upC == downC && upR >= 0) {
+                    if (selR < 0) {
+                        selR = upR;
+                        selC = upC;
+                    } else if (selR == upR && selC == upC) {
+                        selR = -1; selC = -1;
+                    } else if (Math.abs(selR - upR) + Math.abs(selC - upC) == 1) {
+                        attemptSwap(selR, selC, upR, upC);
+                        selR = -1; selC = -1;
+                    } else {
+                        selR = upR;
+                        selC = upC;
+                    }
+                    invalidate();
+                }
+                return true;
+            }
+            return true;
+        }
+
+        private void attemptSwap(int r1, int c1, int r2, int c2) {
+            boolean ok = trySwapMatch3(state, r1, c1, r2, c2);
+            if (ok) {
+                onMatch3Move(state, this, status);
+            } else {
+                Toast.makeText(MainActivity.this, "无法形成三连，已撤回", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    // ============================================================================
+    // 坦克大战 (Tank Battle)
+    // ============================================================================
+
+    private void showTankGame() {
+        int level = getProgress("tank_level", 1);
+        TankState state = new TankState(level, getProgress("tank_best", 0));
+        renderTankGame(state);
+    }
+
+    private void renderTankGame(TankState state) {
+        setRoot("坦克大战  第 " + state.level + " 关");
+        root.addView(label("方向键控制坦克朝向并移动，开火按钮发射子弹；击毁全部敌人过关，老鹰被击中则失败。",
+                14, false), fullWidth());
+        TextView status = label(tankStatus(state), 16, true);
+        root.addView(status, fullWidth());
+        TankBoardView board = new TankBoardView(state, status);
+        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(TANK_BOARD_DP));
+        boardParams.setMargins(0, dp(8), 0, dp(8));
+        root.addView(board, boardParams);
+
+        // Control panel: D-pad on left, fire button on right.
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+        root.addView(controls, fullWidth());
+
+        GridLayout dpad = new GridLayout(this);
+        dpad.setColumnCount(3);
+        dpad.setRowCount(3);
+        addTankDPadCell(dpad, null, 0, state, board);
+        addTankDPadCell(dpad, "上", TANK_DIR_UP, state, board);
+        addTankDPadCell(dpad, null, 0, state, board);
+        addTankDPadCell(dpad, "左", TANK_DIR_LEFT, state, board);
+        addTankDPadCell(dpad, null, 0, state, board);
+        addTankDPadCell(dpad, "右", TANK_DIR_RIGHT, state, board);
+        addTankDPadCell(dpad, null, 0, state, board);
+        addTankDPadCell(dpad, "下", TANK_DIR_DOWN, state, board);
+        addTankDPadCell(dpad, null, 0, state, board);
+        controls.addView(dpad);
+
+        Button fire = new Button(this);
+        fire.setText("开火");
+        fire.setAllCaps(false);
+        fire.setTextSize(20);
+        fire.setTextColor(Color.WHITE);
+        fire.setBackgroundColor(Color.rgb(220, 70, 70));
+        fire.setOnClickListener(v -> tankPlayerFire(state, board));
+        LinearLayout.LayoutParams fireParams = new LinearLayout.LayoutParams(0,
+                dp(96), 1f);
+        fireParams.setMargins(dp(16), dp(8), dp(8), dp(8));
+        controls.addView(fire, fireParams);
+
+        Button restart = new Button(this);
+        restart.setText("重开本关");
+        restart.setAllCaps(false);
+        restart.setOnClickListener(v -> {
+            stopTankLoop(state);
+            renderTankGame(new TankState(state.level, state.best));
+        });
+        root.addView(restart, fullWidth());
+        addBackButton();
+
+        startTankLoop(state, board, status);
+    }
+
+    private void addTankDPadCell(GridLayout dpad, String label, int dir,
+                                  TankState state, TankBoardView board) {
+        if (label == null) {
+            // Spacer.
+            View spacer = new View(this);
+            GridLayout.LayoutParams p = new GridLayout.LayoutParams();
+            p.width = dp(64);
+            p.height = dp(48);
+            dpad.addView(spacer, p);
+            return;
+        }
+        Button b = new Button(this);
+        b.setText(label);
+        b.setAllCaps(false);
+        b.setTextSize(16);
+        // Hold-to-move: button keeps moving while pressed.
+        b.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                state.playerHeldDir = dir;
+                state.player.dir = dir;
+                board.invalidate();
+                return false; // allow click effects too
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP
+                    || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                if (state.playerHeldDir == dir) state.playerHeldDir = -1;
+                return false;
+            }
+            return false;
+        });
+        // Single tap also rotates without moving (handled via DOWN above).
+        GridLayout.LayoutParams p = new GridLayout.LayoutParams();
+        p.width = dp(64);
+        p.height = dp(48);
+        p.setMargins(dp(2), dp(2), dp(2), dp(2));
+        dpad.addView(b, p);
+    }
+
+    private String tankStatus(TankState state) {
+        return "敌方剩余：" + state.enemiesRemaining
+                + "    生命：" + state.playerLives
+                + "    得分：" + state.score
+                + "    最高：" + state.best;
+    }
+
+    private void startTankLoop(TankState state, TankBoardView board, TextView status) {
+        stopTankLoop(state);
+        state.tickRunnable = new Runnable() {
+            @Override public void run() {
+                if (state.gameOver) return;
+                tankTick(state, board, status);
+                if (!state.gameOver) handler.postDelayed(this, TANK_TICK_MS);
+            }
+        };
+        handler.postDelayed(state.tickRunnable, TANK_TICK_MS);
+    }
+
+    private void stopTankLoop(TankState state) {
+        if (state.tickRunnable != null) {
+            handler.removeCallbacks(state.tickRunnable);
+            state.tickRunnable = null;
+        }
+    }
+
+    private void tankTick(TankState state, TankBoardView board, TextView status) {
+        // 1. Move player if direction held.
+        if (state.playerHeldDir >= 0 && state.player.alive) {
+            state.player.dir = state.playerHeldDir;
+            tankTryMove(state, state.player);
+        }
+        // 2. Move enemies + AI fire.
+        for (Tank t : state.enemies) {
+            if (!t.alive) continue;
+            t.aiCooldown--;
+            if (t.aiCooldown <= 0 || !tankCanStep(state, t, t.dir)) {
+                // Pick a new direction; bias toward facing the base / player when adjacent line-of-sight.
+                int preferred = tankPreferredDir(state, t);
+                t.dir = preferred >= 0 ? preferred : random.nextInt(4);
+                t.aiCooldown = 6 + random.nextInt(8);
+            }
+            tankTryMove(state, t);
+            // Random fire chance.
+            if (random.nextInt(14) == 0) tankFire(state, t);
+        }
+        // 3. Spawn enemies if pool has more and below cap.
+        if (state.enemiesQueued > 0 && countAlive(state.enemies) < state.maxAliveEnemies) {
+            tankSpawnEnemy(state);
+        }
+        // 4. Move bullets twice per tick (faster than tanks).
+        for (int step = 0; step < 2; step++) tankAdvanceBullets(state);
+        board.invalidate();
+        status.setText(tankStatus(state));
+        // 5. End conditions.
+        if (state.baseDestroyed || !state.player.alive) {
+            tankEndLevel(state, false);
+        } else if (state.enemiesRemaining == 0) {
+            tankEndLevel(state, true);
+        }
+    }
+
+    private int tankPreferredDir(TankState state, Tank t) {
+        // If aligned with the base or player on the same row/col, face them.
+        if (t.col == state.baseCol && t.row < state.baseRow) return TANK_DIR_DOWN;
+        if (t.row == state.baseRow && t.col < state.baseCol) return TANK_DIR_RIGHT;
+        if (t.row == state.baseRow && t.col > state.baseCol) return TANK_DIR_LEFT;
+        if (state.player.alive) {
+            if (t.col == state.player.col && t.row < state.player.row) return TANK_DIR_DOWN;
+            if (t.col == state.player.col && t.row > state.player.row) return TANK_DIR_UP;
+            if (t.row == state.player.row && t.col < state.player.col) return TANK_DIR_RIGHT;
+            if (t.row == state.player.row && t.col > state.player.col) return TANK_DIR_LEFT;
+        }
+        return -1;
+    }
+
+    private boolean tankCanStep(TankState state, Tank t, int dir) {
+        int nr = t.row + TANK_DR[dir];
+        int nc = t.col + TANK_DC[dir];
+        if (nr < 0 || nr >= TANK_GRID || nc < 0 || nc >= TANK_GRID) return false;
+        int cellv = state.map[nr][nc];
+        if (cellv == TANK_BRICK || cellv == TANK_STEEL || cellv == TANK_BASE) return false;
+        // Don't step onto another tank.
+        for (Tank other : state.allTanks()) {
+            if (other != t && other.alive && other.row == nr && other.col == nc) return false;
+        }
+        return true;
+    }
+
+    private void tankTryMove(TankState state, Tank t) {
+        if (tankCanStep(state, t, t.dir)) {
+            t.row += TANK_DR[t.dir];
+            t.col += TANK_DC[t.dir];
+        }
+    }
+
+    private void tankPlayerFire(TankState state, TankBoardView board) {
+        if (state.gameOver || !state.player.alive) return;
+        // Limit player to 2 active bullets.
+        int active = 0;
+        for (Bullet b : state.bullets) if (b.alive && b.fromPlayer) active++;
+        if (active >= 2) return;
+        tankFire(state, state.player);
+        board.invalidate();
+    }
+
+    private void tankFire(TankState state, Tank t) {
+        Bullet b = new Bullet();
+        b.row = t.row + TANK_DR[t.dir];
+        b.col = t.col + TANK_DC[t.dir];
+        b.dir = t.dir;
+        b.fromPlayer = (t == state.player);
+        b.alive = true;
+        // If immediately off-grid, drop.
+        if (b.row < 0 || b.row >= TANK_GRID || b.col < 0 || b.col >= TANK_GRID) return;
+        state.bullets.add(b);
+    }
+
+    private void tankAdvanceBullets(TankState state) {
+        for (Bullet b : state.bullets) {
+            if (!b.alive) continue;
+            int nr = b.row + TANK_DR[b.dir];
+            int nc = b.col + TANK_DC[b.dir];
+            if (nr < 0 || nr >= TANK_GRID || nc < 0 || nc >= TANK_GRID) {
+                b.alive = false;
+                continue;
+            }
+            b.row = nr;
+            b.col = nc;
+            // Hit wall?
+            int cellv = state.map[nr][nc];
+            if (cellv == TANK_BRICK) {
+                state.map[nr][nc] = TANK_EMPTY;
+                b.alive = false;
+                continue;
+            }
+            if (cellv == TANK_STEEL) {
+                b.alive = false;
+                continue;
+            }
+            if (cellv == TANK_BASE) {
+                state.baseDestroyed = true;
+                b.alive = false;
+                continue;
+            }
+            // Hit tank?
+            for (Tank t : state.allTanks()) {
+                if (!t.alive) continue;
+                if (t.row == nr && t.col == nc) {
+                    if (t == state.player) {
+                        if (b.fromPlayer) continue; // own bullet won't hurt self
+                        state.player.alive = false;
+                        state.playerLives--;
+                        if (state.playerLives > 0) {
+                            // Respawn at start.
+                            state.player.row = state.playerStartRow;
+                            state.player.col = state.playerStartCol;
+                            state.player.dir = TANK_DIR_UP;
+                            state.player.alive = true;
+                        }
+                    } else {
+                        if (!b.fromPlayer) continue; // enemies don't shoot each other
+                        t.alive = false;
+                        state.enemiesRemaining--;
+                        state.score += 100;
+                    }
+                    b.alive = false;
+                    break;
+                }
+            }
+        }
+        // Cull dead bullets occasionally.
+        for (int i = state.bullets.size() - 1; i >= 0; i--) {
+            if (!state.bullets.get(i).alive) state.bullets.remove(i);
+        }
+    }
+
+    private int countAlive(List<Tank> tanks) {
+        int n = 0;
+        for (Tank t : tanks) if (t.alive) n++;
+        return n;
+    }
+
+    private void tankSpawnEnemy(TankState state) {
+        // Spawn at one of three top positions (corners and center) if cell empty.
+        int[] cols = {0, TANK_GRID / 2, TANK_GRID - 1};
+        for (int c : cols) {
+            if (state.map[0][c] != TANK_EMPTY) continue;
+            boolean blocked = false;
+            for (Tank t : state.allTanks()) if (t.alive && t.row == 0 && t.col == c) { blocked = true; break; }
+            if (blocked) continue;
+            Tank enemy = new Tank(0, c, TANK_DIR_DOWN);
+            enemy.aiCooldown = 5;
+            state.enemies.add(enemy);
+            state.enemiesQueued--;
+            return;
+        }
+    }
+
+    private void tankEndLevel(TankState state, boolean win) {
+        if (state.gameOver) return;
+        state.gameOver = true;
+        stopTankLoop(state);
+        state.best = Math.max(state.best, state.score);
+        saveProgress("tank_best", state.best);
+        if (win) {
+            int next = state.level + 1;
+            saveProgress("tank_level", next);
+            new AlertDialog.Builder(this)
+                    .setTitle("过关啦")
+                    .setMessage("击毁全部敌人，本关得分：" + state.score + "，下一关：" + next)
+                    .setPositiveButton("下一关", (d, w) -> renderTankGame(new TankState(next, state.best)))
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        } else {
+            new AlertDialog.Builder(this)
+                    .setTitle("本关失败")
+                    .setMessage(state.baseDestroyed ? "老鹰基地被击毁。" : "全部生命用尽。")
+                    .setPositiveButton("重开本关", (d, w) -> renderTankGame(new TankState(state.level, state.best)))
+                    .setNegativeButton("返回", (d, w) -> showHome())
+                    .show();
+        }
+    }
+
+    private class TankState {
+        final int level;
+        int best;
+        int score;
+        int playerLives = 3;
+        int enemiesQueued;
+        int enemiesRemaining;
+        int maxAliveEnemies = 4;
+        int baseRow;
+        int baseCol;
+        int playerStartRow;
+        int playerStartCol;
+        boolean baseDestroyed;
+        boolean gameOver;
+        int playerHeldDir = -1;
+        Runnable tickRunnable;
+        final int[][] map = new int[TANK_GRID][TANK_GRID];
+        final Tank player;
+        final List<Tank> enemies = new ArrayList<>();
+        final List<Bullet> bullets = new ArrayList<>();
+
+        TankState(int level, int best) {
+            this.level = level;
+            this.best = best;
+            // Map: fixed for first 3 levels, random afterward.
+            buildTankMap(level);
+            int totalEnemies = Math.min(12, 5 + (level - 1));
+            this.enemiesQueued = totalEnemies;
+            this.enemiesRemaining = totalEnemies;
+            // Player spawns near the base.
+            playerStartRow = TANK_GRID - 1;
+            playerStartCol = Math.max(0, baseCol - 2);
+            // Make sure spawn is empty.
+            if (map[playerStartRow][playerStartCol] != TANK_EMPTY) {
+                map[playerStartRow][playerStartCol] = TANK_EMPTY;
+            }
+            this.player = new Tank(playerStartRow, playerStartCol, TANK_DIR_UP);
+        }
+
+        List<Tank> allTanks() {
+            List<Tank> all = new ArrayList<>();
+            if (player.alive) all.add(player);
+            all.addAll(enemies);
+            return all;
+        }
+
+        private void buildTankMap(int level) {
+            // Base at bottom-center.
+            baseRow = TANK_GRID - 1;
+            baseCol = TANK_GRID / 2;
+            map[baseRow][baseCol] = TANK_BASE;
+            // Surround base with bricks.
+            int[][] guard = {{baseRow - 1, baseCol - 1}, {baseRow - 1, baseCol}, {baseRow - 1, baseCol + 1},
+                    {baseRow, baseCol - 1}, {baseRow, baseCol + 1}};
+            for (int[] g : guard) if (inBounds(g[0], g[1])) map[g[0]][g[1]] = TANK_BRICK;
+
+            if (level <= TANK_FIXED_LEVELS) {
+                buildFixedTankMap(level);
+            } else {
+                buildRandomTankMap();
+            }
+        }
+
+        private boolean inBounds(int r, int c) {
+            return r >= 0 && r < TANK_GRID && c >= 0 && c < TANK_GRID;
+        }
+
+        private void buildFixedTankMap(int level) {
+            // Three small handcrafted layouts emphasizing brick walls & corridors.
+            if (level == 1) {
+                // Cross of bricks in the center.
+                for (int r = 4; r <= 8; r++) map[r][6] = TANK_BRICK;
+                for (int c = 4; c <= 8; c++) map[6][c] = TANK_BRICK;
+                // Steel pillars at corners.
+                map[2][2] = TANK_STEEL;
+                map[2][TANK_GRID - 3] = TANK_STEEL;
+                map[TANK_GRID - 3][2] = TANK_STEEL;
+                map[TANK_GRID - 3][TANK_GRID - 3] = TANK_STEEL;
+            } else if (level == 2) {
+                // Two horizontal brick walls leaving a center corridor.
+                for (int c = 1; c < TANK_GRID - 1; c++) {
+                    if (c != 6) {
+                        map[3][c] = TANK_BRICK;
+                        map[9][c] = TANK_BRICK;
+                    }
+                }
+                map[6][3] = TANK_STEEL;
+                map[6][TANK_GRID - 4] = TANK_STEEL;
+            } else { // level 3
+                // Chambered layout with grass cover near the base.
+                for (int r = 2; r <= 4; r++) {
+                    map[r][3] = TANK_BRICK;
+                    map[r][TANK_GRID - 4] = TANK_BRICK;
+                }
+                for (int c = 3; c <= TANK_GRID - 4; c++) map[5][c] = TANK_BRICK;
+                map[5][6] = TANK_EMPTY;
+                for (int r = TANK_GRID - 5; r < TANK_GRID - 2; r++) {
+                    for (int c = 1; c <= 3; c++) map[r][c] = TANK_GRASS;
+                    for (int c = TANK_GRID - 4; c <= TANK_GRID - 2; c++) map[r][c] = TANK_GRASS;
+                }
+            }
+        }
+
+        private void buildRandomTankMap() {
+            // Sprinkle bricks (~22%), steel (~3%), grass (~6%) into empty cells.
+            for (int r = 0; r < TANK_GRID; r++) {
+                for (int c = 0; c < TANK_GRID; c++) {
+                    if (map[r][c] != TANK_EMPTY) continue;
+                    // Reserve top spawn lanes (row 0) as empty.
+                    if (r == 0) continue;
+                    int rv = random.nextInt(100);
+                    if (rv < 22) map[r][c] = TANK_BRICK;
+                    else if (rv < 25) map[r][c] = TANK_STEEL;
+                    else if (rv < 31) map[r][c] = TANK_GRASS;
+                }
+            }
+        }
+    }
+
+    private static class Tank {
+        int row, col, dir;
+        boolean alive = true;
+        int aiCooldown;
+        Tank(int row, int col, int dir) { this.row = row; this.col = col; this.dir = dir; }
+    }
+
+    private static class Bullet {
+        int row, col, dir;
+        boolean fromPlayer;
+        boolean alive;
+    }
+
+    private class TankBoardView extends View {
+        private final TankState state;
+        private final TextView status;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF boardRect = new RectF();
+        private float cell;
+
+        TankBoardView(TankState state, TextView status) {
+            super(MainActivity.this);
+            this.state = state;
+            this.status = status;
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float side = Math.min(getWidth() - dp(16), getHeight() - dp(16));
+            float left = (getWidth() - side) / 2f;
+            float top = (getHeight() - side) / 2f;
+            boardRect.set(left, top, left + side, top + side);
+            cell = side / TANK_GRID;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(40, 40, 40));
+            canvas.drawRect(boardRect, paint);
+            // Cells.
+            for (int r = 0; r < TANK_GRID; r++) {
+                for (int c = 0; c < TANK_GRID; c++) {
+                    int v = state.map[r][c];
+                    if (v == TANK_EMPTY) continue;
+                    float x = boardRect.left + c * cell;
+                    float y = boardRect.top + r * cell;
+                    RectF rect = new RectF(x, y, x + cell, y + cell);
+                    if (v == TANK_BRICK) paint.setColor(Color.rgb(189, 99, 56));
+                    else if (v == TANK_STEEL) paint.setColor(Color.rgb(190, 190, 200));
+                    else if (v == TANK_GRASS) paint.setColor(Color.rgb(80, 170, 70));
+                    else if (v == TANK_BASE) paint.setColor(Color.rgb(220, 200, 70));
+                    canvas.drawRect(rect, paint);
+                    if (v == TANK_BASE) {
+                        paint.setColor(Color.rgb(120, 70, 30));
+                        paint.setTextAlign(Paint.Align.CENTER);
+                        paint.setTextSize(cell * 0.7f);
+                        canvas.drawText("🦅", rect.centerX(), rect.centerY() + cell * 0.25f, paint);
+                    }
+                }
+            }
+            // Tanks.
+            for (Tank t : state.enemies) drawTank(canvas, t, Color.rgb(220, 90, 90));
+            if (state.player.alive) drawTank(canvas, state.player, Color.rgb(110, 200, 240));
+            // Bullets.
+            paint.setColor(Color.rgb(255, 230, 100));
+            for (Bullet b : state.bullets) {
+                if (!b.alive) continue;
+                float bx = boardRect.left + b.col * cell + cell / 2f;
+                float by = boardRect.top + b.row * cell + cell / 2f;
+                canvas.drawCircle(bx, by, cell * 0.18f, paint);
+            }
+        }
+
+        private void drawTank(Canvas canvas, Tank t, int color) {
+            float x = boardRect.left + t.col * cell;
+            float y = boardRect.top + t.row * cell;
+            RectF body = new RectF(x + cell * 0.1f, y + cell * 0.1f,
+                    x + cell * 0.9f, y + cell * 0.9f);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(color);
+            canvas.drawRoundRect(body, dp(3), dp(3), paint);
+            // Barrel.
+            paint.setColor(Color.rgb(50, 50, 50));
+            float cx = body.centerX();
+            float cy = body.centerY();
+            RectF barrel;
+            switch (t.dir) {
+                case TANK_DIR_UP:
+                    barrel = new RectF(cx - cell * 0.08f, y, cx + cell * 0.08f, cy);
+                    break;
+                case TANK_DIR_DOWN:
+                    barrel = new RectF(cx - cell * 0.08f, cy, cx + cell * 0.08f, y + cell);
+                    break;
+                case TANK_DIR_LEFT:
+                    barrel = new RectF(x, cy - cell * 0.08f, cx, cy + cell * 0.08f);
+                    break;
+                default: // RIGHT
+                    barrel = new RectF(cx, cy - cell * 0.08f, x + cell, cy + cell * 0.08f);
+            }
+            canvas.drawRect(barrel, paint);
+        }
     }
 }
