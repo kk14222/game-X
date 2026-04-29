@@ -46,6 +46,8 @@ public class MainActivity extends Activity {
     private static final int PIG_BASE_COUNT = 18;
     private static final int PIG_LEVEL_COUNT_STEP = 3;
     private static final int PIG_MAX_COUNT = 42;
+    private static final int PIG_DIRECTION_COUNT = 8;
+    // Direction indexes are N, NE, E, SE, S, SW, W, NW; rows, cols, and angles must stay aligned.
     private static final int[] PIG_DIR_ROWS = {-1, -1, 0, 1, 1, 1, 0, -1};
     private static final int[] PIG_DIR_COLS = {0, 1, 1, 1, 0, -1, -1, -1};
     private static final float[] PIG_DIR_ANGLES = {0f, 45f, 90f, 135f, 180f, 225f, 270f, 315f};
@@ -969,7 +971,7 @@ public class MainActivity extends Activity {
             Collections.shuffle(positions, random);
             for (int i = 0; i < total; i++) {
                 int[] position = positions.get(i);
-                Pig pig = new Pig(position[0], position[1], random.nextInt(PIG_DIR_ROWS.length));
+                Pig pig = new Pig(position[0], position[1], random.nextInt(PIG_DIRECTION_COUNT));
                 pigs.add(pig);
                 board[pig.row][pig.col] = pig;
             }
