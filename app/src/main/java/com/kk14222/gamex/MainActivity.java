@@ -51,6 +51,10 @@ public class MainActivity extends Activity {
     private static final int[] PIG_DIR_ROWS = {-1, -1, 0, 1, 1, 1, 0, -1};
     private static final int[] PIG_DIR_COLS = {0, 1, 1, 1, 0, -1, -1, -1};
     private static final float[] PIG_DIR_ANGLES = {0f, 45f, 90f, 135f, 180f, 225f, 270f, 315f};
+    private static final float PIG_BACKGROUND_SUN_X = 0.9f;
+    private static final float PIG_BACKGROUND_SUN_Y = 0.75f;
+    private static final float PIG_BACKGROUND_SUN_RADIUS = 0.34f;
+    private static final int PIG_GRASS_STRIPE_OVERFLOW = 2;
     private static final int SHEEP_TRAY_LIMIT = 7;
     private static final int SHEEP_BOARD_DP = 420;
     private static final int SHEEP_LAYERS = 3;
@@ -847,10 +851,10 @@ public class MainActivity extends Activity {
             paint.setColor(Color.rgb(169, 224, 255));
             canvas.drawRoundRect(boardRect, dp(24), dp(24), paint);
             paint.setColor(Color.rgb(255, 246, 178));
-            canvas.drawCircle(boardRect.right - cellSize * 0.9f, boardRect.top + cellSize * 0.75f, cellSize * 0.34f, paint);
+            canvas.drawCircle(boardRect.right - cellSize * PIG_BACKGROUND_SUN_X, boardRect.top + cellSize * PIG_BACKGROUND_SUN_Y, cellSize * PIG_BACKGROUND_SUN_RADIUS, paint);
             paint.setColor(Color.argb(215, 255, 255, 255));
-            canvas.drawOval(new RectF(boardRect.left + cellSize * 0.35f, boardRect.top + cellSize * 0.45f, boardRect.left + cellSize * 1.75f, boardRect.top + cellSize * 0.88f), paint);
-            canvas.drawOval(new RectF(boardRect.left + cellSize * 3.75f, boardRect.top + cellSize * 0.72f, boardRect.left + cellSize * 5.35f, boardRect.top + cellSize * 1.16f), paint);
+            drawCloud(canvas, 0.35f, 0.45f, 1.75f, 0.88f);
+            drawCloud(canvas, 3.75f, 0.72f, 5.35f, 1.16f);
 
             Path hills = new Path();
             hills.moveTo(boardRect.left + dp(8), boardRect.top + cellSize * 1.75f);
@@ -865,7 +869,7 @@ public class MainActivity extends Activity {
             paint.setColor(Color.rgb(140, 210, 132));
             canvas.drawRoundRect(new RectF(boardRect.left + dp(8), boardRect.top + cellSize * 1.2f, boardRect.right - dp(8), boardRect.bottom - dp(8)), dp(18), dp(18), paint);
             paint.setColor(Color.argb(85, 255, 240, 170));
-            for (int i = -2; i < PIG_GRID_SIZE + 2; i += 2) {
+            for (int i = -PIG_GRASS_STRIPE_OVERFLOW; i < PIG_GRID_SIZE + PIG_GRASS_STRIPE_OVERFLOW; i += 2) {
                 float x = boardRect.left + i * cellSize;
                 canvas.drawOval(new RectF(x, boardRect.top + cellSize * 1.35f, x + cellSize * 2.4f, boardRect.bottom - cellSize * 0.15f), paint);
             }
@@ -875,6 +879,10 @@ public class MainActivity extends Activity {
             paint.setStyle(Paint.Style.STROKE);
             canvas.drawRoundRect(new RectF(boardRect.left + dp(10), boardRect.top + dp(10), boardRect.right - dp(10), boardRect.bottom - dp(10)), dp(17), dp(17), paint);
             paint.setStyle(Paint.Style.FILL);
+        }
+
+        private void drawCloud(Canvas canvas, float leftCell, float topCell, float rightCell, float bottomCell) {
+            canvas.drawOval(new RectF(boardRect.left + cellSize * leftCell, boardRect.top + cellSize * topCell, boardRect.left + cellSize * rightCell, boardRect.top + cellSize * bottomCell), paint);
         }
 
         private void drawPig(Canvas canvas, Pig pig) {
