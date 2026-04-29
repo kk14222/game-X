@@ -621,13 +621,31 @@ public class MainActivity extends Activity {
         add2048Tile(state);
         add2048Tile(state);
         TextView score = label("得分：0  最高：" + state.best, 18, true);
-        root.addView(label("用方向按钮移动数字；相同数字碰撞会合成。", 16, false), fullWidth());
+        root.addView(label("在棋盘上滑动或使用方向按钮移动数字；相同数字碰撞会合成，出现 2048 即达成目标。", 16, false), fullWidth());
         root.addView(score, fullWidth());
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(4);
         grid.setUseDefaultMargins(true);
-        root.addView(grid, fullWidth());
         Button[][] cells = new Button[4][4];
+        final float[] down = new float[2];
+        grid.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                down[0] = event.getX();
+                down[1] = event.getY();
+                return true;
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP) {
+                float dx = event.getX() - down[0];
+                float dy = event.getY() - down[1];
+                if (Math.max(Math.abs(dx), Math.abs(dy)) > dp(24)) {
+                    if (Math.abs(dx) > Math.abs(dy)) move2048(state, dx > 0 ? 1 : -1, 0, cells, score);
+                    else move2048(state, 0, dy > 0 ? 1 : -1, cells, score);
+                }
+                return true;
+            }
+            return true;
+        });
+        root.addView(grid, fullWidth());
         for (int r = 0; r < 4; r++) {
             for (int c = 0; c < 4; c++) {
                 Button cell = new Button(this);
@@ -688,6 +706,15 @@ public class MainActivity extends Activity {
         }
         if (moved) add2048Tile(state);
         draw2048(state, cells, score);
+        if (!state.won && has2048(state)) {
+            state.won = true;
+            new AlertDialog.Builder(this)
+                    .setTitle("合成 2048！")
+                    .setMessage("已达成原版目标，可以继续挑战更高分。")
+                    .setPositiveButton("继续", null)
+                    .setNegativeButton("重新开始", (d, w) -> show2048Game())
+                    .show();
+        }
         if (!canMove2048(state)) {
             new AlertDialog.Builder(this)
                     .setTitle("没有可移动格子")
@@ -696,6 +723,11 @@ public class MainActivity extends Activity {
                     .setNegativeButton("返回", (d, w) -> showHome())
                     .show();
         }
+    }
+
+    private boolean has2048(Game2048State state) {
+        for (int[] row : state.board) for (int value : row) if (value >= 2048) return true;
+        return false;
     }
 
     private boolean slide2048(Game2048State state, boolean[][] merged, int r, int c, int dx, int dy) {
