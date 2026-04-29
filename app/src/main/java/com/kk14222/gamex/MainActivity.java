@@ -45,6 +45,9 @@ public class MainActivity extends Activity {
     private static final int PIG_BASE_COUNT = 12;
     private static final int PIG_LEVEL_COUNT_STEP = 2;
     private static final int PIG_MAX_COUNT = 32;
+    private static final int[] PIG_DIR_ROWS = {-1, 0, 1, 0};
+    private static final int[] PIG_DIR_COLS = {0, 1, 0, -1};
+    private static final String[] PIG_ARROWS = {"↑", "→", "↓", "←"};
     private static final int TILE_GAME_CELL_DP = 58;
     private static final int WATERMELON_CELL_DP = 62;
     private static final int GAME_2048_CELL_DP = 72;
@@ -168,8 +171,8 @@ public class MainActivity extends Activity {
         Pig pig = state.pigAt(row, col);
         if (pig == null) return;
 
-        int dr = PigRushState.DIR_ROWS[pig.direction];
-        int dc = PigRushState.DIR_COLS[pig.direction];
+        int dr = PIG_DIR_ROWS[pig.direction];
+        int dc = PIG_DIR_COLS[pig.direction];
         int nextRow = pig.row + dr;
         int nextCol = pig.col + dc;
         int steps = 0;
@@ -747,7 +750,7 @@ public class MainActivity extends Activity {
             paint.setTextSize(radius * 0.95f);
             paint.setFakeBoldText(true);
             paint.setColor(Color.rgb(86, 83, 94));
-            canvas.drawText(PigRushState.ARROWS[pig.direction], cx, cy + radius * 1.55f, paint);
+            canvas.drawText(PIG_ARROWS[pig.direction], cx, cy + radius * 1.55f, paint);
             paint.setFakeBoldText(false);
         }
 
@@ -764,9 +767,6 @@ public class MainActivity extends Activity {
     }
 
     private class PigRushState {
-        static final int[] DIR_ROWS = {-1, 0, 1, 0};
-        static final int[] DIR_COLS = {0, 1, 0, -1};
-        static final String[] ARROWS = {"↑", "→", "↓", "←"};
         final int level;
         final int total;
         final List<Pig> pigs = new ArrayList<>();
