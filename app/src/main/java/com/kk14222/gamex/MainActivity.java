@@ -44,7 +44,6 @@ public class MainActivity extends Activity {
 
     private static final int PIG_GRID_ROWS = 13;
     private static final int PIG_GRID_COLS = 9;
-    private static final int PIG_BOARD_DP = 520;
     private static final int PIG_BASE_COUNT = 32;
     private static final int PIG_LEVEL_COUNT_STEP = 6;
     private static final int PIG_MAX_COUNT = 90;
@@ -119,6 +118,11 @@ public class MainActivity extends Activity {
             tankTicker = null;
         }
         ScrollView scrollView = new ScrollView(this);
+        // Fill viewport so children with layout_weight can stretch to use the
+        // full screen height when content would otherwise be shorter, and so
+        // game boards declared with weight expand to remove the need for the
+        // user to scroll up and down.
+        scrollView.setFillViewport(true);
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(16), dp(16), dp(16), dp(24));
@@ -201,7 +205,13 @@ public class MainActivity extends Activity {
         root.addView(status, fullWidth());
 
         PigRushBoardView board = new PigRushBoardView(state, status);
-        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(PIG_BOARD_DP));
+        // Use height=0 with weight=1 so the pig pen expands to fill the
+        // remaining vertical space after the title/status/tools/restart rows.
+        // This avoids needing to scroll on phones whose screen would have
+        // been shorter than the old fixed pig board height, and gives the
+        // pigs a larger, more immersive area on taller screens.
+        LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
         boardParams.setMargins(0, dp(8), 0, dp(8));
         root.addView(board, boardParams);
 
