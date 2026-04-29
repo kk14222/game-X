@@ -36,6 +36,7 @@ public class MainActivity extends Activity {
     private LinearLayout root;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Runnable jumpTicker;
+    private Runnable tankTicker;
 
     private static final String[] PIG_SYMBOLS = {"🐷", "🥕", "🌽", "🍎", "🍇", "🍉", "⭐", "🔔", "🎁", "🍀", "🥬", "🍄"};
     private static final String[] SHEEP_SYMBOLS = {"🐑", "🌿", "🧶", "🌙", "☁", "🌼", "🍃", "💧", "🥛", "🪵", "🔆", "🍂"};
@@ -112,6 +113,10 @@ public class MainActivity extends Activity {
         if (jumpTicker != null) {
             handler.removeCallbacks(jumpTicker);
             jumpTicker = null;
+        }
+        if (tankTicker != null) {
+            handler.removeCallbacks(tankTicker);
+            tankTicker = null;
         }
         ScrollView scrollView = new ScrollView(this);
         root = new LinearLayout(this);
@@ -235,6 +240,16 @@ public class MainActivity extends Activity {
         b.setTextColor(Color.WHITE);
         b.setBackgroundColor(color);
         b.setPadding(dp(4), dp(8), dp(4), dp(8));
+        // Manual press feedback: setBackgroundColor wipes the default selector, so dim alpha on press.
+        b.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                if (v.isEnabled()) v.setAlpha(0.7f);
+            } else if (event.getAction() == MotionEvent.ACTION_UP
+                    || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                v.setAlpha(v.isEnabled() ? 1f : 0.45f);
+            }
+            return false;
+        });
         return b;
     }
 
@@ -790,8 +805,9 @@ public class MainActivity extends Activity {
                 float dy = event.getY() - down[1];
                 float adx = Math.abs(dx);
                 float ady = Math.abs(dy);
+                float maxAxis = Math.max(adx, ady);
                 // Larger threshold and clear-direction requirement avoid ambiguous diagonal swipes.
-                if (Math.max(adx, ady) >= dp(32) && Math.max(adx, ady) >= Math.min(adx, ady) * 1.3f) {
+                if (maxAxis >= dp(32) && maxAxis >= Math.min(adx, ady) * 1.3f) {
                     if (adx > ady) move2048(state, dx > 0 ? 1 : -1, 0, cells, scoreCard, bestCard, gainHint);
                     else move2048(state, 0, dy > 0 ? 1 : -1, cells, scoreCard, bestCard, gainHint);
                 }
@@ -1397,10 +1413,13 @@ public class MainActivity extends Activity {
             float left = (getWidth() - slot * SHEEP_TRAY_LIMIT) / 2f;
             paint.setTextAlign(Paint.Align.CENTER);
             paint.setTextSize(slot * 0.48f);
+            // Warn when one slot away from filling up; tray full = lose.
+            boolean warn = state.tray.size() >= SHEEP_TRAY_LIMIT - 1;
+            int slotColor = warn ? Color.rgb(248, 198, 198) : Color.rgb(238, 224, 203);
             for (int i = 0; i < SHEEP_TRAY_LIMIT; i++) {
                 RectF rect = new RectF(left + i * slot, top, left + (i + 1) * slot - dp(4), top + slot);
                 paint.setStyle(Paint.Style.FILL);
-                paint.setColor(Color.rgb(238, 224, 203));
+                paint.setColor(slotColor);
                 canvas.drawRoundRect(rect, dp(8), dp(8), paint);
                 if (i < state.tray.size()) {
                     paint.setColor(Color.rgb(69, 48, 36));
@@ -1428,6 +1447,7 @@ public class MainActivity extends Activity {
         private final TextView scoreLabel;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private long chargeStartedAt;
+        private long lastReleaseAt;
 
         JumpGameView(JumpState state, TextView scoreLabel) {
             super(MainActivity.this);
@@ -1478,6 +1498,8 @@ public class MainActivity extends Activity {
         public boolean onTouchEvent(MotionEvent event) {
             if (state.gameOver) return true;
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                // Lockout brief window after release so rapid taps don't reset charge mid-frame.
+                if (System.currentTimeMillis() - lastReleaseAt < 250L) return true;
                 state.charging = true;
                 state.charge = 0f;
                 chargeStartedAt = System.currentTimeMillis();
@@ -1493,6 +1515,7 @@ public class MainActivity extends Activity {
             }
             if (event.getAction() == MotionEvent.ACTION_UP && state.charging) {
                 state.charging = false;
+                lastReleaseAt = System.currentTimeMillis();
                 if (jumpTicker != null) handler.removeCallbacks(jumpTicker);
                 finishJump(state, this, scoreLabel, System.currentTimeMillis() - chargeStartedAt);
                 return true;
@@ -1508,6 +1531,7 @@ public class MainActivity extends Activity {
         private final RectF boardRect = new RectF();
         private float cellW;
         private float cellH;
+        private long lastDropAt;
 
         WatermelonBoardView(WatermelonState state, TextView scoreLabel) {
             super(MainActivity.this);
@@ -1560,6 +1584,10 @@ public class MainActivity extends Activity {
         public boolean onTouchEvent(MotionEvent event) {
             if (event.getAction() != MotionEvent.ACTION_UP) return true;
             if (!boardRect.contains(event.getX(), event.getY())) return true;
+            // Cooldown 500ms to prevent rapid-fire double drops while gravity collapses.
+            long now = System.currentTimeMillis();
+            if (now - lastDropAt < 500L) return true;
+            lastDropAt = now;
             int col = (int) ((event.getX() - boardRect.left) / cellW);
             dropWatermelon(state, this, scoreLabel, col);
             return true;
@@ -1874,14 +1902,21 @@ public class MainActivity extends Activity {
             this.target = MATCH3_BASE_TARGET + (level - 1) * MATCH3_LEVEL_TARGET_STEP;
             this.movesLeft = MATCH3_BASE_MOVES;
             this.best = best;
-            // Generate a board with no initial matches.
+            // Generate a board with no initial matches; bound the retries to avoid any pathological loop.
+            int attempts = 0;
             do {
                 for (int r = 0; r < MATCH3_SIZE; r++) {
                     for (int c = 0; c < MATCH3_SIZE; c++) {
                         board[r][c] = random.nextInt(MATCH3_SYMBOLS.length);
                     }
                 }
-            } while (findMatch3(this) > 0);
+                attempts++;
+            } while (findMatch3(this) > 0 && attempts < 50);
+            if (findMatch3(this) > 0) {
+                // Fallback: clear any pre-existing matches without scoring before play starts.
+                resolveMatch3Cascade(this);
+                score = 0;
+            }
         }
     }
 
@@ -2134,12 +2169,14 @@ public class MainActivity extends Activity {
                 if (!state.gameOver) handler.postDelayed(this, TANK_TICK_MS);
             }
         };
+        tankTicker = state.tickRunnable;
         handler.postDelayed(state.tickRunnable, TANK_TICK_MS);
     }
 
     private void stopTankLoop(TankState state) {
         if (state.tickRunnable != null) {
             handler.removeCallbacks(state.tickRunnable);
+            if (tankTicker == state.tickRunnable) tankTicker = null;
             state.tickRunnable = null;
         }
     }
