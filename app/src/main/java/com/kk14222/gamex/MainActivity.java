@@ -41,20 +41,24 @@ public class MainActivity extends Activity {
     private static final String[] SHEEP_SYMBOLS = {"🐑", "🌿", "🧶", "🌙", "☁", "🌼", "🍃", "💧", "🥛", "🪵", "🔆", "🍂"};
     private static final String[] FRUITS = {"🍒", "🍓", "🍊", "🍋", "🍎", "🍑", "🍍", "🍉"};
 
-    private static final int PIG_GRID_SIZE = 7;
-    private static final int PIG_BOARD_DP = 420;
-    private static final int PIG_BASE_COUNT = 18;
-    private static final int PIG_LEVEL_COUNT_STEP = 3;
-    private static final int PIG_MAX_COUNT = 42;
+    private static final int PIG_GRID_ROWS = 13;
+    private static final int PIG_GRID_COLS = 9;
+    private static final int PIG_BOARD_DP = 520;
+    private static final int PIG_BASE_COUNT = 32;
+    private static final int PIG_LEVEL_COUNT_STEP = 6;
+    private static final int PIG_MAX_COUNT = 90;
     private static final int PIG_DIRECTION_COUNT = 8;
     // Direction indexes are N, NE, E, SE, S, SW, W, NW; rows, cols, and angles must stay aligned.
     private static final int[] PIG_DIR_ROWS = {-1, -1, 0, 1, 1, 1, 0, -1};
     private static final int[] PIG_DIR_COLS = {0, 1, 1, 1, 0, -1, -1, -1};
     private static final float[] PIG_DIR_ANGLES = {0f, 45f, 90f, 135f, 180f, 225f, 270f, 315f};
-    private static final float PIG_BACKGROUND_SUN_X = 0.9f;
-    private static final float PIG_BACKGROUND_SUN_Y = 0.75f;
-    private static final float PIG_BACKGROUND_SUN_RADIUS = 0.34f;
-    private static final int PIG_GRASS_STRIPE_OVERFLOW = 2;
+    private static final int PIG_TOOL_REMOVE = 3;
+    private static final int PIG_TOOL_SHUFFLE_DIR = 3;
+    private static final int PIG_TOOL_FLIP = 2;
+    private static final int PIG_TOOL_SHUFFLE_POS = 2;
+    private static final int PIG_BG_GRASS = Color.rgb(186, 232, 142);
+    private static final int PIG_BG_PEN = Color.rgb(170, 222, 130);
+    private static final int PIG_BG_PEN_DARK = Color.rgb(141, 199, 102);
     private static final int SHEEP_TRAY_LIMIT = 7;
     private static final int SHEEP_BOARD_DP = 420;
     private static final int SHEEP_LAYERS = 3;
@@ -161,13 +165,32 @@ public class MainActivity extends Activity {
     private void renderPigRushGame(PigRushState state) {
         setRoot("猪了个猪  第 " + state.level + " 关");
         TextView status = label(pigRushStatus(state), 16, false);
-        root.addView(label("点击任意小猪，它会沿自己脸朝向的方向逐格冲刺（含斜向）；路径上遇到猪会停在阻挡前，没有阻挡就冲出围栏。", 16, false), fullWidth());
+        root.addView(label("点击任意小猪，它会沿自己脸朝向的方向冲刺；遇到同伴会停下，没人挡路就直接冲出围栏。", 14, false), fullWidth());
         root.addView(status, fullWidth());
 
         PigRushBoardView board = new PigRushBoardView(state, status);
         LinearLayout.LayoutParams boardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(PIG_BOARD_DP));
-        boardParams.setMargins(0, dp(8), 0, dp(10));
+        boardParams.setMargins(0, dp(8), 0, dp(8));
         root.addView(board, boardParams);
+
+        // Bottom power-up bar: 消除 / 洗牌(方向) / 翻转 / 洗牌(位置)
+        LinearLayout tools = new LinearLayout(this);
+        tools.setOrientation(LinearLayout.HORIZONTAL);
+        tools.setPadding(0, dp(2), 0, dp(2));
+        Button btnRemove = pigToolButton("消除", "随机带走 1 只", Color.rgb(255, 165, 79), state.removeLeft);
+        btnRemove.setOnClickListener(v -> usePigTool(state, board, status, "remove"));
+        Button btnShuffleDir = pigToolButton("洗牌", "随机所有方向", Color.rgb(167, 117, 207), state.shuffleDirLeft);
+        btnShuffleDir.setOnClickListener(v -> usePigTool(state, board, status, "shuffleDir"));
+        Button btnFlip = pigToolButton("翻转", "全体掉头", Color.rgb(96, 175, 224), state.flipLeft);
+        btnFlip.setOnClickListener(v -> usePigTool(state, board, status, "flip"));
+        Button btnShufflePos = pigToolButton("洗牌", "重新分布位置", Color.rgb(167, 117, 207), state.shufflePosLeft);
+        btnShufflePos.setOnClickListener(v -> usePigTool(state, board, status, "shufflePos"));
+        tools.addView(btnRemove, equalToolParams());
+        tools.addView(btnShuffleDir, equalToolParams());
+        tools.addView(btnFlip, equalToolParams());
+        tools.addView(btnShufflePos, equalToolParams());
+        state.toolButtons = new Button[]{btnRemove, btnShuffleDir, btnFlip, btnShufflePos};
+        root.addView(tools, fullWidth());
 
         Button restart = new Button(this);
         restart.setText("重开本关（重新随机猪群）");
@@ -177,8 +200,92 @@ public class MainActivity extends Activity {
         addBackButton();
     }
 
+    private Button pigToolButton(String title, String hint, int color, int count) {
+        Button b = new Button(this);
+        b.setText(title + "\n" + hint + " ×" + count);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setTextColor(Color.WHITE);
+        b.setBackgroundColor(color);
+        b.setPadding(dp(4), dp(8), dp(4), dp(8));
+        return b;
+    }
+
+    private LinearLayout.LayoutParams equalToolParams() {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        p.setMargins(dp(4), dp(4), dp(4), dp(4));
+        return p;
+    }
+
+    private void refreshPigToolButtons(PigRushState state) {
+        if (state.toolButtons == null) return;
+        int[] counts = {state.removeLeft, state.shuffleDirLeft, state.flipLeft, state.shufflePosLeft};
+        String[] titles = {"消除", "洗牌", "翻转", "洗牌"};
+        String[] hints = {"随机带走 1 只", "随机所有方向", "全体掉头", "重新分布位置"};
+        for (int i = 0; i < state.toolButtons.length; i++) {
+            Button b = state.toolButtons[i];
+            if (b == null) continue;
+            b.setText(titles[i] + "\n" + hints[i] + " ×" + counts[i]);
+            b.setEnabled(counts[i] > 0 && state.remaining > 0);
+            b.setAlpha(counts[i] > 0 && state.remaining > 0 ? 1f : 0.45f);
+        }
+    }
+
+    private void usePigTool(PigRushState state, PigRushBoardView board, TextView status, String which) {
+        if (state.remaining == 0) return;
+        boolean used = false;
+        switch (which) {
+            case "remove":
+                if (state.removeLeft > 0) {
+                    used = state.removeRandomPig();
+                    if (used) state.removeLeft--;
+                }
+                break;
+            case "shuffleDir":
+                if (state.shuffleDirLeft > 0) {
+                    state.shuffleDirections(random);
+                    state.shuffleDirLeft--;
+                    used = true;
+                }
+                break;
+            case "flip":
+                if (state.flipLeft > 0) {
+                    state.flipAllDirections();
+                    state.flipLeft--;
+                    used = true;
+                }
+                break;
+            case "shufflePos":
+                if (state.shufflePosLeft > 0) {
+                    state.shufflePositions(random);
+                    state.shufflePosLeft--;
+                    used = true;
+                }
+                break;
+        }
+        if (!used) return;
+        status.setText(pigRushStatus(state));
+        refreshPigToolButtons(state);
+        board.invalidate();
+        if (state.remaining == 0) showPigWinDialog(state);
+    }
+
     private String pigRushStatus(PigRushState state) {
-        return "剩余小猪：" + state.remaining + "/" + state.total + "。全部冲出围栏即可过关。";
+        int cleared = state.total - state.remaining;
+        int progress = state.total == 0 ? 100 : Math.round(cleared * 100f / state.total);
+        return "进度 " + progress + "%　·　剩余 " + state.remaining + "/" + state.total
+                + (state.remaining > 0 && !state.hasAnyMove() ? "　·　暂时无解，试试技能" : "");
+    }
+
+    private void showPigWinDialog(PigRushState state) {
+        int next = state.level + 1;
+        saveProgress("pig_level", next);
+        new AlertDialog.Builder(this)
+                .setTitle("过关啦")
+                .setMessage("所有小猪都冲出围栏了！下一关：" + next)
+                .setPositiveButton("下一关", (d, w) -> renderPigRushGame(new PigRushState(next)))
+                .setNegativeButton("返回", (d, w) -> showHome())
+                .show();
     }
 
     private void handlePigRushTap(PigRushState state, PigRushBoardView board, TextView status, int row, int col) {
@@ -191,7 +298,8 @@ public class MainActivity extends Activity {
         int targetCol = pig.col;
         int scanRow = pig.row + dr;
         int scanCol = pig.col + dc;
-        while (state.isInside(scanRow, scanCol)) {
+        // Dash through empty placeable cells; out-of-grid OR out-of-mask both mean "exit".
+        while (state.isPlaceable(scanRow, scanCol)) {
             if (state.pigAt(scanRow, scanCol) != null) break;
             targetRow = scanRow;
             targetCol = scanCol;
@@ -199,33 +307,24 @@ public class MainActivity extends Activity {
             scanCol += dc;
         }
 
-        if (!state.isInside(scanRow, scanCol)) {
+        boolean escaped = !state.isPlaceable(scanRow, scanCol);
+        if (escaped) {
             state.board[pig.row][pig.col] = null;
             pig.active = false;
             state.remaining--;
-            Toast.makeText(this, "小猪冲出去了！", Toast.LENGTH_SHORT).show();
         } else if (targetRow != pig.row || targetCol != pig.col) {
             state.board[pig.row][pig.col] = null;
             pig.row = targetRow;
             pig.col = targetCol;
             state.board[pig.row][pig.col] = pig;
-            Toast.makeText(this, "前方被挡住，小猪停下了", Toast.LENGTH_SHORT).show();
         } else {
-            Toast.makeText(this, "前方紧贴着小猪，冲不动", Toast.LENGTH_SHORT).show();
+            // Hard-blocked, still update for haptic feel via status hint.
         }
 
         status.setText(pigRushStatus(state));
+        refreshPigToolButtons(state);
         board.invalidate();
-        if (state.remaining == 0) {
-            int next = state.level + 1;
-            saveProgress("pig_level", next);
-            new AlertDialog.Builder(this)
-                    .setTitle("过关啦")
-                    .setMessage("所有小猪都冲出围栏了！下一关：" + next)
-                    .setPositiveButton("下一关", (d, w) -> renderPigRushGame(new PigRushState(next)))
-                    .setNegativeButton("返回", (d, w) -> showHome())
-                    .show();
-        }
+        if (state.remaining == 0) showPigWinDialog(state);
     }
 
     private void showSheepGame() {
@@ -802,102 +901,128 @@ public class MainActivity extends Activity {
         private final TextView status;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF boardRect = new RectF();
-        private float cellSize;
+        private float cellW;
+        private float cellH;
+        private float originX;
+        private float originY;
 
         PigRushBoardView(PigRushState state, TextView status) {
             super(MainActivity.this);
             this.state = state;
             this.status = status;
-            setBackgroundColor(Color.rgb(255, 248, 239));
+            setBackgroundColor(PIG_BG_GRASS);
         }
 
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            float side = Math.min(getWidth() - dp(24), getHeight() - dp(20));
-            float left = (getWidth() - side) / 2f;
-            float top = (getHeight() - side) / 2f;
-            boardRect.set(left, top, left + side, top + side);
-            cellSize = side / PIG_GRID_SIZE;
+            // Reserve a uniform inset, then compute cell size so the rows×cols grid (with
+            // hex-stagger offset of half a cell) fits within the available area.
+            float availW = getWidth() - dp(20);
+            float availH = getHeight() - dp(20);
+            // Effective horizontal extent is (cols + 0.5) cells because of staggering.
+            float fitByW = availW / (PIG_GRID_COLS + 0.5f);
+            // Vertical packing: rows partially overlap when staggered (typical hex factor ~0.86).
+            float fitByH = availH / (1f + (PIG_GRID_ROWS - 1) * 0.86f);
+            cellW = Math.min(fitByW, fitByH);
+            cellH = cellW * 0.86f;
+            float boardW = (PIG_GRID_COLS + 0.5f) * cellW;
+            float boardH = cellW + (PIG_GRID_ROWS - 1) * cellH;
+            originX = (getWidth() - boardW) / 2f + cellW * 0.5f;
+            originY = (getHeight() - boardH) / 2f + cellW * 0.5f;
+            boardRect.set(originX - cellW * 0.5f, originY - cellW * 0.5f,
+                    originX - cellW * 0.5f + boardW, originY - cellW * 0.5f + boardH);
 
             drawPigRushBackground(canvas);
-
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(1));
-            paint.setColor(Color.argb(82, 67, 123, 74));
-            for (int i = 1; i < PIG_GRID_SIZE; i++) {
-                float offset = boardRect.left + cellSize * i;
-                canvas.drawLine(offset, boardRect.top + dp(10), offset, boardRect.bottom - dp(10), paint);
-                float row = boardRect.top + cellSize * i;
-                canvas.drawLine(boardRect.left + dp(10), row, boardRect.right - dp(10), row, paint);
-            }
-
-            paint.setStyle(Paint.Style.FILL);
-            paint.setTextAlign(Paint.Align.CENTER);
-            paint.setTextSize(cellSize * 0.24f);
-            paint.setColor(Color.rgb(250, 255, 236));
-            canvas.drawText("出口", boardRect.centerX(), boardRect.top + cellSize * 0.45f, paint);
-            canvas.drawText("出口", boardRect.centerX(), boardRect.bottom - cellSize * 0.25f, paint);
-            canvas.drawText("出口", boardRect.left + cellSize * 0.55f, boardRect.centerY(), paint);
-            canvas.drawText("出口", boardRect.right - cellSize * 0.55f, boardRect.centerY(), paint);
 
             for (Pig pig : state.pigs) {
                 if (pig.active) drawPig(canvas, pig);
             }
         }
 
+        private float pigCenterX(int row, int col) {
+            float stagger = (row & 1) == 1 ? cellW * 0.5f : 0f;
+            return originX + col * cellW + stagger;
+        }
+
+        private float pigCenterY(int row) {
+            return originY + row * cellH;
+        }
+
         private void drawPigRushBackground(Canvas canvas) {
+            // Solid grass background already painted by setBackgroundColor; add subtle pen oval.
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.rgb(169, 224, 255));
-            canvas.drawRoundRect(boardRect, dp(24), dp(24), paint);
-            paint.setColor(Color.rgb(255, 246, 178));
-            canvas.drawCircle(boardRect.right - cellSize * PIG_BACKGROUND_SUN_X, boardRect.top + cellSize * PIG_BACKGROUND_SUN_Y, cellSize * PIG_BACKGROUND_SUN_RADIUS, paint);
-            paint.setColor(Color.argb(215, 255, 255, 255));
-            drawCloud(canvas, 0.35f, 0.45f, 1.75f, 0.88f);
-            drawCloud(canvas, 3.75f, 0.72f, 5.35f, 1.16f);
+            float padX = cellW * 0.4f;
+            float padY = cellH * 0.4f;
+            RectF pen = new RectF(boardRect.left + padX, boardRect.top + padY,
+                    boardRect.right - padX, boardRect.bottom - padY);
+            paint.setColor(PIG_BG_PEN);
+            canvas.drawOval(pen, paint);
 
-            Path hills = new Path();
-            hills.moveTo(boardRect.left + dp(8), boardRect.top + cellSize * 1.75f);
-            hills.cubicTo(boardRect.left + cellSize * 1.2f, boardRect.top + cellSize * 0.95f, boardRect.left + cellSize * 2.1f, boardRect.top + cellSize * 2.45f, boardRect.left + cellSize * 3.4f, boardRect.top + cellSize * 1.45f);
-            hills.cubicTo(boardRect.left + cellSize * 4.45f, boardRect.top + cellSize * 0.78f, boardRect.left + cellSize * 5.25f, boardRect.top + cellSize * 2.25f, boardRect.right - dp(8), boardRect.top + cellSize * 1.4f);
-            hills.lineTo(boardRect.right - dp(8), boardRect.bottom - dp(8));
-            hills.lineTo(boardRect.left + dp(8), boardRect.bottom - dp(8));
-            hills.close();
-            paint.setColor(Color.rgb(107, 190, 120));
-            canvas.drawPath(hills, paint);
-
-            paint.setColor(Color.rgb(140, 210, 132));
-            canvas.drawRoundRect(new RectF(boardRect.left + dp(8), boardRect.top + cellSize * 1.2f, boardRect.right - dp(8), boardRect.bottom - dp(8)), dp(18), dp(18), paint);
-            paint.setColor(Color.argb(85, 255, 240, 170));
-            for (int stripeIndex = -PIG_GRASS_STRIPE_OVERFLOW; stripeIndex < PIG_GRID_SIZE + PIG_GRASS_STRIPE_OVERFLOW; stripeIndex += 2) {
-                float x = boardRect.left + stripeIndex * cellSize;
-                canvas.drawOval(new RectF(x, boardRect.top + cellSize * 1.35f, x + cellSize * 2.4f, boardRect.bottom - cellSize * 0.15f), paint);
-            }
-
-            paint.setColor(Color.rgb(156, 108, 66));
-            paint.setStrokeWidth(dp(5));
+            // Faint dashed boundary suggesting the open-air "fence".
             paint.setStyle(Paint.Style.STROKE);
-            canvas.drawRoundRect(new RectF(boardRect.left + dp(10), boardRect.top + dp(10), boardRect.right - dp(10), boardRect.bottom - dp(10)), dp(17), dp(17), paint);
+            paint.setStrokeWidth(dp(2));
+            paint.setColor(Color.argb(70, 90, 140, 70));
+            paint.setPathEffect(new android.graphics.DashPathEffect(new float[]{dp(6), dp(6)}, 0));
+            canvas.drawOval(pen, paint);
+            paint.setPathEffect(null);
+            paint.setStyle(Paint.Style.FILL);
+
+            // Decorative grass tufts scattered along the rim.
+            paint.setColor(PIG_BG_PEN_DARK);
+            Random deco = new Random(state.level * 9176L + 31);
+            for (int i = 0; i < 18; i++) {
+                float angle = (float) (deco.nextDouble() * Math.PI * 2);
+                float rx = pen.width() * 0.5f * (0.55f + deco.nextFloat() * 0.55f);
+                float ry = pen.height() * 0.5f * (0.55f + deco.nextFloat() * 0.55f);
+                float gx = pen.centerX() + (float) Math.cos(angle) * rx;
+                float gy = pen.centerY() + (float) Math.sin(angle) * ry;
+                drawGrassTuft(canvas, gx, gy, cellW * 0.2f);
+            }
+            // Butterflies: a few small white/yellow accents like in the reference image.
+            for (int i = 0; i < 4; i++) {
+                float bx = boardRect.left + dp(20) + deco.nextFloat() * (boardRect.width() - dp(40));
+                float by = boardRect.top + dp(20) + deco.nextFloat() * (boardRect.height() - dp(40));
+                drawButterfly(canvas, bx, by, cellW * 0.18f, deco.nextBoolean());
+            }
+        }
+
+        private void drawGrassTuft(Canvas canvas, float cx, float cy, float size) {
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(dp(1), size * 0.18f));
+            paint.setColor(Color.argb(160, 96, 156, 78));
+            canvas.drawLine(cx - size * 0.4f, cy + size * 0.3f, cx - size * 0.2f, cy - size * 0.5f, paint);
+            canvas.drawLine(cx, cy + size * 0.3f, cx, cy - size * 0.6f, paint);
+            canvas.drawLine(cx + size * 0.4f, cy + size * 0.3f, cx + size * 0.2f, cy - size * 0.5f, paint);
             paint.setStyle(Paint.Style.FILL);
         }
 
-        private void drawCloud(Canvas canvas, float leftCell, float topCell, float rightCell, float bottomCell) {
-            canvas.drawOval(new RectF(boardRect.left + cellSize * leftCell, boardRect.top + cellSize * topCell, boardRect.left + cellSize * rightCell, boardRect.top + cellSize * bottomCell), paint);
+        private void drawButterfly(Canvas canvas, float cx, float cy, float size, boolean yellow) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(yellow ? Color.argb(220, 255, 244, 170) : Color.argb(220, 255, 255, 255));
+            canvas.drawOval(new RectF(cx - size, cy - size * 0.7f, cx - size * 0.05f, cy + size * 0.2f), paint);
+            canvas.drawOval(new RectF(cx + size * 0.05f, cy - size * 0.7f, cx + size, cy + size * 0.2f), paint);
+            canvas.drawOval(new RectF(cx - size * 0.85f, cy + size * 0.05f, cx - size * 0.1f, cy + size * 0.65f), paint);
+            canvas.drawOval(new RectF(cx + size * 0.1f, cy + size * 0.05f, cx + size * 0.85f, cy + size * 0.65f), paint);
+            paint.setColor(Color.argb(220, 90, 70, 60));
+            canvas.drawOval(new RectF(cx - size * 0.08f, cy - size * 0.5f, cx + size * 0.08f, cy + size * 0.6f), paint);
         }
 
         private void drawPig(Canvas canvas, Pig pig) {
-            float cx = boardRect.left + pig.col * cellSize + cellSize / 2f;
-            float cy = boardRect.top + pig.row * cellSize + cellSize / 2f;
-            float radius = cellSize * 0.35f;
+            float cx = pigCenterX(pig.row, pig.col);
+            float cy = pigCenterY(pig.row);
+            float radius = Math.min(cellW, cellH) * 0.55f;
 
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(55, 80, 62, 44));
-            canvas.drawOval(new RectF(cx - radius * 0.95f, cy + radius * 0.56f, cx + radius * 0.95f, cy + radius * 1.0f), paint);
+            paint.setColor(Color.argb(60, 80, 62, 44));
+            canvas.drawOval(new RectF(cx - radius * 0.95f, cy + radius * 0.58f,
+                    cx + radius * 0.95f, cy + radius * 1.05f), paint);
 
             canvas.save();
             canvas.translate(cx, cy);
             canvas.rotate(PIG_DIR_ANGLES[pig.direction]);
 
+            // Ears
             paint.setColor(Color.rgb(252, 135, 169));
             Path leftEar = new Path();
             leftEar.moveTo(-radius * 0.38f, -radius * 0.58f);
@@ -912,11 +1037,13 @@ public class MainActivity extends Activity {
             rightEar.close();
             canvas.drawPath(rightEar, paint);
 
+            // Body
             paint.setColor(Color.rgb(255, 186, 203));
             canvas.drawOval(new RectF(-radius * 0.88f, -radius * 0.55f, radius * 0.88f, radius * 0.75f), paint);
             paint.setColor(Color.rgb(255, 202, 215));
             canvas.drawCircle(0, -radius * 0.33f, radius * 0.66f, paint);
 
+            // Snout / nose
             paint.setColor(Color.rgb(255, 128, 162));
             Path nose = new Path();
             nose.moveTo(0, -radius * 0.98f);
@@ -925,16 +1052,19 @@ public class MainActivity extends Activity {
             nose.close();
             canvas.drawPath(nose, paint);
 
+            // Eyes
             paint.setColor(Color.rgb(82, 48, 54));
             canvas.drawCircle(-radius * 0.24f, -radius * 0.36f, radius * 0.08f, paint);
             canvas.drawCircle(radius * 0.24f, -radius * 0.36f, radius * 0.08f, paint);
 
+            // Nostrils
             paint.setColor(Color.rgb(255, 129, 161));
             canvas.drawOval(new RectF(-radius * 0.24f, -radius * 0.82f, radius * 0.24f, -radius * 0.58f), paint);
             paint.setColor(Color.rgb(123, 65, 73));
             canvas.drawCircle(-radius * 0.08f, -radius * 0.7f, radius * 0.035f, paint);
             canvas.drawCircle(radius * 0.08f, -radius * 0.7f, radius * 0.035f, paint);
 
+            // Curly tail at the back
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(radius * 0.1f);
             paint.setColor(Color.rgb(230, 107, 145));
@@ -949,33 +1079,66 @@ public class MainActivity extends Activity {
             if (event.getAction() != MotionEvent.ACTION_UP) {
                 return true;
             }
-            if (!boardRect.contains(event.getX(), event.getY())) {
-                return true;
+            // Find the nearest active pig to the touch point, within one cell radius.
+            float tx = event.getX();
+            float ty = event.getY();
+            float bestDistSq = Float.MAX_VALUE;
+            Pig best = null;
+            float threshold = Math.min(cellW, cellH) * 0.6f;
+            float thresholdSq = threshold * threshold;
+            for (Pig pig : state.pigs) {
+                if (!pig.active) continue;
+                float dx = pigCenterX(pig.row, pig.col) - tx;
+                float dy = pigCenterY(pig.row) - ty;
+                float d2 = dx * dx + dy * dy;
+                if (d2 < bestDistSq && d2 <= thresholdSq) {
+                    bestDistSq = d2;
+                    best = pig;
+                }
             }
-            int col = (int) ((event.getX() - boardRect.left) / cellSize);
-            int row = (int) ((event.getY() - boardRect.top) / cellSize);
-            handlePigRushTap(state, this, status, row, col);
+            if (best != null) {
+                handlePigRushTap(state, this, status, best.row, best.col);
+            }
             return true;
         }
     }
 
     private class PigRushState {
         final int level;
-        final int total;
+        int total;
         final List<Pig> pigs = new ArrayList<>();
-        final Pig[][] board = new Pig[PIG_GRID_SIZE][PIG_GRID_SIZE];
+        final Pig[][] board = new Pig[PIG_GRID_ROWS][PIG_GRID_COLS];
+        final boolean[][] placeable = new boolean[PIG_GRID_ROWS][PIG_GRID_COLS];
         int remaining;
+        int removeLeft = PIG_TOOL_REMOVE;
+        int shuffleDirLeft = PIG_TOOL_SHUFFLE_DIR;
+        int flipLeft = PIG_TOOL_FLIP;
+        int shufflePosLeft = PIG_TOOL_SHUFFLE_POS;
+        Button[] toolButtons;
 
         PigRushState(int level) {
             this.level = level;
-            total = Math.min(PIG_MAX_COUNT, PIG_BASE_COUNT + (level - 1) * PIG_LEVEL_COUNT_STEP);
-            remaining = total;
+            // Build oval pen mask (placeable cells inside ellipse).
+            float cy = (PIG_GRID_ROWS - 1) / 2f;
+            float cx = (PIG_GRID_COLS - 1) / 2f;
+            float ry = (PIG_GRID_ROWS - 1) / 2f + 0.05f;
+            float rx = (PIG_GRID_COLS - 1) / 2f + 0.05f;
+            int placeableCells = 0;
             List<int[]> positions = new ArrayList<>();
-            for (int row = 0; row < PIG_GRID_SIZE; row++) {
-                for (int col = 0; col < PIG_GRID_SIZE; col++) {
-                    positions.add(new int[]{row, col});
+            for (int row = 0; row < PIG_GRID_ROWS; row++) {
+                for (int col = 0; col < PIG_GRID_COLS; col++) {
+                    float ny = (row - cy) / ry;
+                    float nx = (col - cx) / rx;
+                    if (nx * nx + ny * ny <= 1f) {
+                        placeable[row][col] = true;
+                        placeableCells++;
+                        positions.add(new int[]{row, col});
+                    }
                 }
             }
+            int desired = PIG_BASE_COUNT + (level - 1) * PIG_LEVEL_COUNT_STEP;
+            total = Math.min(Math.min(PIG_MAX_COUNT, placeableCells), desired);
+            remaining = total;
             Collections.shuffle(positions, random);
             for (int i = 0; i < total; i++) {
                 int[] position = positions.get(i);
@@ -986,19 +1149,80 @@ public class MainActivity extends Activity {
         }
 
         boolean isInside(int row, int col) {
-            return row >= 0 && row < PIG_GRID_SIZE && col >= 0 && col < PIG_GRID_SIZE;
+            return row >= 0 && row < PIG_GRID_ROWS && col >= 0 && col < PIG_GRID_COLS;
+        }
+
+        boolean isPlaceable(int row, int col) {
+            return isInside(row, col) && placeable[row][col];
         }
 
         Pig pigAt(int row, int col) {
             if (!isInside(row, col)) return null;
             return board[row][col];
         }
+
+        boolean hasAnyMove() {
+            // Returns true if at least one pig can dash to any new cell or escape.
+            for (Pig pig : pigs) {
+                if (!pig.active) continue;
+                int dr = PIG_DIR_ROWS[pig.direction];
+                int dc = PIG_DIR_COLS[pig.direction];
+                int nr = pig.row + dr;
+                int nc = pig.col + dc;
+                if (!isPlaceable(nr, nc)) return true; // can escape
+                if (board[nr][nc] == null) return true; // can move
+            }
+            return false;
+        }
+
+        boolean removeRandomPig() {
+            List<Pig> active = new ArrayList<>();
+            for (Pig p : pigs) if (p.active) active.add(p);
+            if (active.isEmpty()) return false;
+            Pig victim = active.get(random.nextInt(active.size()));
+            board[victim.row][victim.col] = null;
+            victim.active = false;
+            remaining--;
+            return true;
+        }
+
+        void shuffleDirections(Random rng) {
+            for (Pig p : pigs) {
+                if (p.active) p.direction = rng.nextInt(PIG_DIRECTION_COUNT);
+            }
+        }
+
+        void flipAllDirections() {
+            for (Pig p : pigs) {
+                if (p.active) p.direction = (p.direction + 4) % PIG_DIRECTION_COUNT;
+            }
+        }
+
+        void shufflePositions(Random rng) {
+            List<Pig> active = new ArrayList<>();
+            for (Pig p : pigs) if (p.active) active.add(p);
+            List<int[]> slots = new ArrayList<>();
+            for (int r = 0; r < PIG_GRID_ROWS; r++) {
+                for (int c = 0; c < PIG_GRID_COLS; c++) {
+                    if (placeable[r][c]) slots.add(new int[]{r, c});
+                    board[r][c] = null;
+                }
+            }
+            Collections.shuffle(slots, rng);
+            for (int i = 0; i < active.size(); i++) {
+                Pig p = active.get(i);
+                int[] slot = slots.get(i);
+                p.row = slot[0];
+                p.col = slot[1];
+                board[p.row][p.col] = p;
+            }
+        }
     }
 
     private static class Pig {
         int row;
         int col;
-        final int direction;
+        int direction;
         boolean active = true;
 
         Pig(int row, int col, int direction) {
