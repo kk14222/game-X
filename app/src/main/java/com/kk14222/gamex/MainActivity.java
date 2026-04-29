@@ -266,13 +266,15 @@ public class MainActivity extends Activity {
     }
 
     private void askMathThen(String title, Runnable onSuccess) {
-        int a = random.nextInt(100);
-        int b = random.nextInt(100);
         boolean plus = random.nextBoolean();
-        if (!plus && b > a) {
-            int swap = a;
-            a = b;
-            b = swap;
+        int a;
+        int b;
+        if (plus) {
+            a = random.nextInt(101);
+            b = random.nextInt(101 - a);
+        } else {
+            a = random.nextInt(101);
+            b = random.nextInt(a + 1);
         }
         int answer = plus ? a + b : a - b;
         String question = a + (plus ? " + " : " - ") + b + " = ?";
