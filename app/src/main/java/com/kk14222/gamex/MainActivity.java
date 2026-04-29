@@ -109,7 +109,7 @@ public class MainActivity extends Activity {
     }
 
     private int getProgress(String key, int fallback) {
-        return Math.max(fallback, prefs.getInt(key, fallback));
+        return prefs.getInt(key, fallback);
     }
 
     private void saveProgress(String key, int value) {
@@ -344,7 +344,7 @@ public class MainActivity extends Activity {
                     else builder.append("▱");
                 }
                 meter.setText(builder.toString());
-                handler.postDelayed(this, Math.max(110, 280 - state.level * 4L));
+                handler.postDelayed(this, Math.max(110L, 280L - state.level * 4L));
             }
         };
         handler.post(jumpTicker);
